@@ -32,13 +32,13 @@ jobs:
         run: cargo install cargo-ndk --locked
         working-directory: ${{ runner.temp }}
 
-      - name: Install Android NDK 30.0.16248370
+      - name: Install Android NDK 28.2.13676358
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
-          "$SDKMANAGER" "ndk;30.0.16248370"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          "$SDKMANAGER" "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Show toolchain versions (for debugging)
         run: |
