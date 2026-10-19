@@ -13,7 +13,34 @@ subprocess.run([sys.executable, str(ROOT / "scripts/bootstrap.py")], check=True)
 if not pathlib.Path(a.ndk, "source.properties").is_file():
     raise SystemExit("Install the configured Android NDK in SDK Manager")
 
-env = dict(os.environ, ANDROID_NDK_HOME=a.ndk, ANDROID_NDK_ROOT=a.ndk)
+# Find the NDK clang compiler
+ndk_path = pathlib.Path(a.ndk)
+toolchain_bin = ndk_path / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+
+if not toolchain_bin.exists():
+    # Fallback for newer NDK layouts
+    toolchain_bin = ndk_path / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+
+env = dict(os.environ)
+env["ANDROID_NDK_HOME"] = a.ndk
+env["ANDROID_NDK_ROOT"] = a.ndk
+
+# Set explicit C/C++ compilers for each target
+targets = {
+    "arm64-v8a": "aarch64-linux-android",
+    "armeabi-v7a": "armv7-linux-androideabi",
+    "x86": "i686-linux-android",
+    "x86_64": "x86_64-linux-android",
+}
+
+for triple in targets.values():
+    clang = str(toolchain_bin / f"{triple}-clang")
+    if not pathlib.Path(clang).exists():
+        raise SystemExit(f"NDK compiler not found: {clang}")
+    env[f"CC_{triple.replace('-', '_')}"] = clang
+    env[f"CXX_{triple.replace('-', '_')}"] = str(toolchain_bin / f"{triple}-clang++")
+    env[f"AR_{triple.replace('-', '_')}"] = str(toolchain_bin / "llvm-ar")
+
 env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([
     "-C", "link-arg=-Wl,-z,max-page-size=16384",
     "-C", "link-arg=-Wl,-z,common-page-size=16384"
@@ -22,13 +49,6 @@ env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([
 manifest_abs = str((ROOT / "native" / "Cargo.toml").resolve())
 out_abs = pathlib.Path(a.output).resolve()
 out_abs.mkdir(parents=True, exist_ok=True)
-
-targets = {
-    "arm64-v8a": "aarch64-linux-android",
-    "armeabi-v7a": "armv7-linux-androideabi",
-    "x86": "i686-linux-android",
-    "x86_64": "x86_64-linux-android",
-}
 
 for abi, target in targets.items():
     print(f"[Rust] Building {abi} ({target})...")
@@ -40,8 +60,9 @@ for abi, target in targets.items():
         "--lib"
     ]
     result = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
-    if result.returncode != 0:
+    if result.stdout:
         print(result.stdout)
+    if result.returncode != 0:
         print(result.stderr, file=sys.stderr)
         raise SystemExit(f"Failed to build {abi}")
 
