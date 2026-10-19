@@ -19,48 +19,37 @@ env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([
     "-C", "link-arg=-Wl,-z,common-page-size=16384"
 ])
 
-cargo = shutil.which("cargo") or str(pathlib.Path.home() / ".cargo/bin/cargo")
 manifest_abs = str((ROOT / "native" / "Cargo.toml").resolve())
-out_abs = str(pathlib.Path(a.output).resolve())
+out_abs = pathlib.Path(a.output).resolve()
+out_abs.mkdir(parents=True, exist_ok=True)
 
-print(f"[Rust] Manifest: {manifest_abs}")
-print(f"[Rust] Output:   {out_abs}")
-print(f"[Rust] CWD:      {ROOT}")
+targets = {
+    "arm64-v8a": "aarch64-linux-android",
+    "armeabi-v7a": "armv7-linux-androideabi",
+    "x86": "i686-linux-android",
+    "x86_64": "x86_64-linux-android",
+}
 
-# Verify manifest is readable by attempting to open it
-try:
-    with open(manifest_abs, 'r') as f:
-        first_line = f.readline().strip()
-    print(f"[Rust] Manifest first line: {first_line}")
-except Exception as e:
-    raise SystemExit(f"Cannot read manifest: {e}")
+for abi, target in targets.items():
+    print(f"[Rust] Building {abi} ({target})...")
+    cmd = [
+        "cargo", "build",
+        "--manifest-path", manifest_abs,
+        "--target", target,
+        "--release",
+        "--lib"
+    ]
+    result = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr, file=sys.stderr)
+        raise SystemExit(f"Failed to build {abi}")
 
-cmd = [
-    cargo, "ndk",
-    "--platform", "26",
-    "-o", out_abs,
-    "-t", "arm64-v8a",
-    "-t", "armeabi-v7a",
-    "-t", "x86",
-    "-t", "x86_64",
-    "build",
-    "--manifest-path", manifest_abs,
-    "--release"
-]
-
-print(f"[Rust] Command: {' '.join(cmd)}")
-
-result = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
-print(result.stdout)
-if result.stderr:
-    print(result.stderr, file=sys.stderr)
-
-if result.returncode != 0:
-    raise SystemExit(f"cargo-ndk failed with exit code {result.returncode}")
-
-for abi in ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]:
-    lib_path = pathlib.Path(out_abs, abi, "libmkpdf_jni.so")
-    if not lib_path.is_file():
-        raise SystemExit(f"Missing ABI library: {lib_path}")
+    # Copy .so to output directory
+    src = ROOT / "native" / "target" / target / "release" / "libmkpdf_jni.so"
+    dst = out_abs / abi / "libmkpdf_jni.so"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    print(f"[Rust] Copied {src.name} -> {dst}")
 
 print("[Rust] Build successful")
