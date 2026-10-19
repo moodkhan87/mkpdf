@@ -48,7 +48,19 @@ cmd += [
 
 print(f"[Rust] Building with manifest: {manifest_path}")
 print(f"[Rust] Working directory: {ROOT}")
-
+# ADD THESE LINES RIGHT BEFORE subprocess.run(cmd, ...)
+import stat
+manifest = pathlib.Path(manifest_path)
+print(f"[DIAG] Manifest exists: {manifest.exists()}")
+print(f"[DIAG] Manifest is file: {manifest.is_file()}")
+print(f"[DIAG] Manifest permissions: {oct(manifest.stat().st_mode)}")
+print(f"[DIAG] Manifest owner UID/GID: {manifest.stat().st_uid}/{manifest.stat().st_gid}")
+print(f"[DIAG] Parent dir writable: {pathlib.access(str(manifest.parent), os.W_OK)}")
+print(f"[DIAG] Current user: {os.getuid()}")
+# List native directory contents
+for item in (ROOT / "native").iterdir():
+    print(f"[DIAG] Native item: {item.name} (is_file={item.is_file()}, is_symlink={item.is_symlink()})")
+    
 # 6. Execute with explicit cwd
 subprocess.run(cmd, cwd=str(ROOT), env=env, check=True)
 
