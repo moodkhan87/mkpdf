@@ -32,14 +32,20 @@ jobs:
         run: cargo install cargo-ndk --locked
         working-directory: ${{ runner.temp }}
 
-      - name: Use the runner's preinstalled NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - name: Install Android NDK 30.0.16248370
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;30.0.16248370"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
       - name: Show toolchain versions (for debugging)
         run: |
           rustc --version
           cargo --version
           echo "NDK: $ANDROID_NDK_HOME"
+          ls "$ANDROID_HOME/ndk"
 
       - name: Build debug APK
         run: |
