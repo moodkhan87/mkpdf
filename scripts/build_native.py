@@ -1,98 +1,119 @@
 #!/usr/bin/env python3
+"""Cross-compile the mkpdf JNI crate for Android (called by Gradle's buildRust task)."""
 import argparse, os, pathlib, shutil, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+# Must match minSdk in app/build.gradle.kts.
+API = 26
+
+# ABI -> (Rust target triple, NDK clang wrapper prefix).
+# Modern NDKs only ship wrappers named "<prefix><API>-clang" (API level included).
+# For 32-bit ARM the prefix is "armv7a-linux-androideabi" (with the "a"),
+# which differs from the Rust triple "armv7-linux-androideabi".
+TARGETS = {
+    "arm64-v8a":   ("aarch64-linux-android",   "aarch64-linux-android"),
+    "armeabi-v7a": ("armv7-linux-androideabi", "armv7a-linux-androideabi"),
+    "x86":         ("i686-linux-android",      "i686-linux-android"),
+    "x86_64":      ("x86_64-linux-android",    "x86_64-linux-android"),
+}
+
 p = argparse.ArgumentParser()
 p.add_argument("--ndk", required=True)
 p.add_argument("--output", required=True)
+p.add_argument(
+    "--abis",
+    default="arm64-v8a",
+    help="comma-separated ABIs, or 'all' (default: arm64-v8a only)",
+)
 a = p.parse_args()
 
-# Bootstrap PdfCraft
+if a.abis == "all":
+    abis = list(TARGETS)
+else:
+    abis = [x.strip() for x in a.abis.split(",") if x.strip()]
+    unknown = [x for x in abis if x not in TARGETS]
+    if unknown:
+        raise SystemExit(f"Unknown ABI(s): {unknown}. Valid: {list(TARGETS)}")
+
+# Fetch the pinned PdfCraft sources into vendor/pdfcraft.
 subprocess.run([sys.executable, str(ROOT / "scripts/bootstrap.py")], check=True)
 
-ndk_path = pathlib.Path(a.ndk)
-if not (ndk_path / "source.properties").is_file():
-    raise SystemExit(f"NDK source.properties not found at {ndk_path}")
+ndk = pathlib.Path(a.ndk)
+if not (ndk / "source.properties").is_file():
+    raise SystemExit(f"NDK source.properties not found at {ndk}")
 
-# Dynamically find the LLVM toolchain bin directory
-# NDK layouts vary: some use linux-x86_64, others may differ
-llvm_bin = None
-for candidate in [
-    ndk_path / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin",
-    ndk_path / "toolchains" / "llvm" / "prebuilt" / "linux-aarch64" / "bin",
-]:
-    if candidate.is_dir():
-        llvm_bin = candidate
-        break
-
+prebuilt = ndk / "toolchains" / "llvm" / "prebuilt"
+llvm_bin = next(
+    (d / "bin" for d in sorted(prebuilt.glob("*")) if (d / "bin").is_dir()), None
+)
 if llvm_bin is None:
-    # Last resort: search recursively for aarch64-linux-android-clang
-    clang_candidates = list(ndk_path.rglob("aarch64-linux-android-clang"))
-    if clang_candidates:
-        llvm_bin = clang_candidates[0].parent
-    else:
-        raise SystemExit(
-            f"Could not find NDK LLVM toolchain in {ndk_path}. "
-            f"Contents of toolchains dir: {list((ndk_path / 'toolchains').iterdir()) if (ndk_path / 'toolchains').exists() else 'N/A'}"
-        )
+    raise SystemExit(f"No LLVM toolchain found under {prebuilt}")
+print(f"[Rust] NDK toolchain bin: {llvm_bin}", flush=True)
 
-print(f"[Rust] Using NDK toolchain: {llvm_bin}")
+
+def tool(name):
+    """Return the full path of an NDK tool, or stop with a helpful listing."""
+    path = llvm_bin / name
+    if not path.is_file():
+        wrappers = sorted(x.name for x in llvm_bin.glob("*android*-clang"))
+        raise SystemExit(
+            f"Missing NDK tool: {path}\n"
+            f"Available clang wrappers ({len(wrappers)}): {wrappers[:12]}"
+        )
+    return str(path)
+
 
 env = dict(os.environ)
-env["ANDROID_NDK_HOME"] = a.ndk
-env["ANDROID_NDK_ROOT"] = a.ndk
-
-targets = {
-    "arm64-v8a": "aarch64-linux-android",
-    "armeabi-v7a": "armv7-linux-androideabi",
-    "x86": "i686-linux-android",
-    "x86_64": "x86_64-linux-android",
-}
-
-for triple in targets.values():
-    clang = str(llvm_bin / f"{triple}-clang")
-    clangxx = str(llvm_bin / f"{triple}-clang++")
-    ar = str(llvm_bin / "llvm-ar")
-    
-    env_key = triple.replace("-", "_")
-    env[f"CC_{env_key}"] = clang
-    env[f"CXX_{env_key}"] = clangxx
-    env[f"AR_{env_key}"] = ar
-    
-    print(f"[Rust] {env_key}: CC={clang}")
-
+env["ANDROID_NDK_HOME"] = str(ndk)
+env["ANDROID_NDK_ROOT"] = str(ndk)
+env["PATH"] = str(llvm_bin) + os.pathsep + env.get("PATH", "")
+# 16 KB page-size alignment (required for newer Android devices).
 env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([
     "-C", "link-arg=-Wl,-z,max-page-size=16384",
-    "-C", "link-arg=-Wl,-z,common-page-size=16384"
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
 ])
 
-manifest_abs = str((ROOT / "native" / "Cargo.toml").resolve())
-out_abs = pathlib.Path(a.output).resolve()
-out_abs.mkdir(parents=True, exist_ok=True)
+manifest = str((ROOT / "native" / "Cargo.toml").resolve())
+out_dir = pathlib.Path(a.output).resolve()
+out_dir.mkdir(parents=True, exist_ok=True)
 
-for abi, target in targets.items():
-    print(f"\n[Rust] Building {abi} ({target})...")
+for abi in abis:
+    triple, prefix = TARGETS[abi]
+    clang = tool(f"{prefix}{API}-clang")
+    clangxx = tool(f"{prefix}{API}-clang++")
+    ar = tool("llvm-ar")
+
+    key = triple.replace("-", "_")
+    build_env = dict(env)
+    build_env[f"CC_{key}"] = clang
+    build_env[f"CXX_{key}"] = clangxx
+    build_env[f"AR_{key}"] = ar
+    # cargo links the final .so with this; without it cargo falls back to host "cc".
+    build_env[f"CARGO_TARGET_{key.upper()}_LINKER"] = clang
+
+    print(f"\n[Rust] === {abi} ({triple}) ===", flush=True)
+    print(f"[Rust] compiler/linker: {clang}", flush=True)
+    subprocess.run([clang, "--version"], check=True)  # sanity: wrapper really runs
+
     cmd = [
         "cargo", "build",
-        "--manifest-path", manifest_abs,
-        "--target", target,
+        "--manifest-path", manifest,
+        "--target", triple,
         "--release",
-        "--lib"
+        "--lib",
     ]
-    result = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
-    
-    # Print stdout always, stderr only on failure
-    if result.stdout.strip():
-        print(result.stdout)
-    
+    # Output streams live (not captured) so the CI log stays in order.
+    result = subprocess.run(cmd, cwd=str(ROOT), env=build_env)
     if result.returncode != 0:
-        print(result.stderr, file=sys.stderr)
-        raise SystemExit(f"Failed to build {abi} (exit code {result.returncode})")
+        raise SystemExit(f"Failed to build {abi} (cargo exit code {result.returncode})")
 
-    src = ROOT / "native" / "target" / target / "release" / "libmkpdf_jni.so"
-    dst = out_abs / abi / "libmkpdf_jni.so"
+    src = ROOT / "native" / "target" / triple / "release" / "libmkpdf_jni.so"
+    if not src.is_file():
+        raise SystemExit(f"Build reported success but {src} does not exist")
+    dst = out_dir / abi / "libmkpdf_jni.so"
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
-    print(f"[Rust] ✓ Copied libmkpdf_jni.so -> {dst}")
+    print(f"[Rust] OK: copied -> {dst}", flush=True)
 
-print("\n[Rust] All ABIs built successfully!")
+print("\n[Rust] Done: " + ", ".join(abis), flush=True)
