@@ -13,7 +13,7 @@ env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(["-C", "link-arg=-Wl,-z,max-page-si
 cargo = shutil.which("cargo") or str(pathlib.Path.home() / ".cargo/bin/cargo")
 cmd = [cargo, "ndk", "--platform", "26", "-o", str(pathlib.Path(a.output).resolve())]
 for abi in ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]: cmd += ["-t", abi]
-cmd += ["build", "--manifest-path", "native/Cargo.toml", "--release", "--locked"]
+cmd += ["build", "--manifest-path", "native/Cargo.toml", "--release"]
 subprocess.run(cmd, cwd=ROOT, env=env, check=True)
 for abi in ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]:
     if not pathlib.Path(a.output, abi, "libmkpdf_jni.so").is_file(): raise SystemExit("Missing ABI: " + abi)
