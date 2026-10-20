@@ -22,6 +22,8 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
     private val _ui=MutableStateFlow(UiState())
     val ui=_ui.asStateFlow()
     private var searchJob:Job?=null
+    /** The file the current document was opened from (or last saved to). Null means Save falls back to Save As. */
+    private var sourceUri:Uri?=null
     init { perform {repo.run {init()};_ui.update {it.copy(recoveryAvailable=repo.saf.recovery.isFile)}} }
     fun dismissError() {_ui.update {it.copy(error=null)}}
     fun dismissMessage() {_ui.update {it.copy(message=null)}}
@@ -47,18 +49,18 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         publish(value)
         if(old!=null && old.handle!=value.getLong("handle"))repo.run {call("close",old);clearCache()}
     }
-    fun newDocument()=perform {replace(repo.run {call("blank")})}
+    fun newDocument()=perform {replace(repo.run {call("blank")});sourceUri=null}
     fun open(uri:Uri)=perform {
         val value=repo.run {
             val (name,file)=saf.stage(uri)
             try {val d=call("open",null,"path" to file.absolutePath,"name" to name);saf.persistRead(uri);d}
             finally {file.delete()}
-        }; replace(value)
+        }; replace(value);sourceUri=uri
     }
     fun reopenRecent() {repo.saf.recent()?.let(::open)}
     fun recover()=perform {
         val d=repo.run {call("open",null,"path" to saf.recovery.absolutePath,"name" to "Recovered.pdf")}
-        replace(d);_ui.update {it.copy(recoveryAvailable=false)}
+        replace(d);sourceUri=null;_ui.update {it.copy(recoveryAvailable=false)}
     }
     fun edit(op:String,vararg args:Pair<String,Any?>) {
         val d=_ui.value.doc?:return
@@ -93,7 +95,25 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 uris.forEach {staged+=saf.stage(it)}
                 call("combine",null,"inputs" to staged.map {(name,file)->obj("name" to name,"path" to file.absolutePath)})
             } finally {staged.forEach {it.second.delete()}}
-        };replace(value)
+        };replace(value);sourceUri=null
+    }
+    /** Combine the chosen files with the current document (including its unsaved edits), before or after it. */
+    fun combineWithCurrent(uris:List<Uri>,before:Boolean) {
+        val d=_ui.value.doc?:return
+        perform {
+            if(uris.isEmpty())throw IllegalArgumentException("Select at least one PDF")
+            val value=repo.run {
+                val snap=call("snapshot",d)
+                val current=obj("name" to d.name,"path" to snap.getString("path"))
+                val staged=mutableListOf<Pair<String,File>>()
+                try {
+                    uris.forEach {staged+=saf.stage(it)}
+                    val picked=staged.map {(name,file)->obj("name" to name,"path" to file.absolutePath)}
+                    call("combine",null,"inputs" to if(before)picked+current else listOf(current)+picked)
+                } finally {staged.forEach {it.second.delete()}}
+            }
+            replace(value);sourceUri=null
+        }
     }
     fun saveAs(uri:Uri) {
         val d=_ui.value.doc?:return
@@ -102,23 +122,63 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 val snap=call("snapshot",d)
                 saf.write(uri,File(snap.getString("path")))
                 call("mark_saved",d)
-            };publish(value);_ui.update {it.copy(message="Saved a PDF copy. Original source was not overwritten.")}
+            };publish(value);sourceUri=uri;_ui.update {it.copy(message="Saved a PDF copy. Original source was not overwritten.")}
         }
     }
-    fun splitAll(tree:Uri) {
+    /** Save to the file the document came from; if that is not possible, ask the UI to open Save As. */
+    fun saveInPlace(onFallback:()->Unit) {
+        val d=_ui.value.doc?:return
+        val uri=sourceUri
+        if(uri==null){onFallback();return}
+        if(_ui.value.busy)return
+        viewModelScope.launch {
+            _ui.update {it.copy(busy=true,error=null)}
+            var failed=false
+            try {
+                val value=repo.run {
+                    val snap=call("snapshot",d)
+                    saf.write(uri,File(snap.getString("path")))
+                    call("mark_saved",d)
+                }
+                publish(value)
+                _ui.update {it.copy(message="Saved.")}
+            } catch(e:CancellationException){throw e}
+            catch(e:Exception){failed=true;sourceUri=null}
+            finally {_ui.update {it.copy(busy=false)}}
+            if(failed)onFallback()
+        }
+    }
+    fun deletePages(pages:List<Int>) {
+        val d=_ui.value.doc?:return
+        searchJob?.cancel()
+        perform {
+            var current=d
+            var last:JSONObject?=null
+            // Delete from the highest page down so the remaining page numbers stay valid.
+            for(p in pages.sortedDescending()) {
+                val value=repo.run {call("delete",current,"page" to p)}
+                current=value.document();last=value
+            }
+            last?.let {publish(it)}
+        }
+    }
+    /** Write one PDF per range (0-based, inclusive) into the chosen folder. */
+    fun splitRanges(tree:Uri,ranges:List<IntRange>) {
         val d=_ui.value.doc?:return
         perform {
             var count=0
             try {
                 repo.run {
-                    for(page in d.pages.indices) {
+                    val base=d.name.substringBeforeLast('.')
+                    for(r in ranges) {
                         coroutineContext.ensureActive()
-                        val out=call("extract",d,"pages" to listOf(page))
-                        val dest=saf.child(tree,"${d.name.substringBeforeLast('.')}-${page+1}.pdf")
+                        val out=call("extract",d,"pages" to r.toList())
+                        val label=if(r.first==r.last)"${r.first+1}" else "${r.first+1}-${r.last+1}"
+                        val dest=saf.child(tree,"$base-$label.pdf")
                         saf.write(dest,File(out.getString("path")));count++
                     }
                 }
-                _ui.update {it.copy(message="Wrote $count separate PDF pages.")}
+                _ui.update {it.copy(message="Wrote $count PDF files.")}
             }catch(e:Exception){throw IllegalStateException("Split stopped after $count files: ${e.message}",e)}
         }
     }
