@@ -96,7 +96,7 @@ fun EditorApp(vm: EditorViewModel) {
                         Box {
                             IconButton(onClick = { menu = true }, enabled = !ui.busy) { Icon(MkIcons.MoreVert, "More") }
                             DropdownMenu(menu, { menu = false }) {
-                                fun item(label: String, enabled: Boolean = true, action: () -> Unit) =
+                                @Composable fun item(label: String, enabled: Boolean = true, action: () -> Unit) =
                                     DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = { menu = false; action() })
                                 item("Open") { replaceSafely { open.launch(arrayOf("application/pdf")) } }
                                 item("New") { replaceSafely { vm.newDocument() } }
