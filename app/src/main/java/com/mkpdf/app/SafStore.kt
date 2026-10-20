@@ -5,9 +5,18 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+
+/** Same as the normal file picker, but also asks Android for permission to write back to the chosen file. */
+class OpenPdfWithWrite : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: Context, input: Array<String>): Intent =
+        super.createIntent(context, input).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        )
+}
 
 class SafStore(private val context: Context) {
     val root = File(context.filesDir,"workspace").apply { mkdirs() }
@@ -15,12 +24,16 @@ class SafStore(private val context: Context) {
     private val resolver get() = context.contentResolver
     private val prefs = context.getSharedPreferences("documents",Context.MODE_PRIVATE)
     fun persistRead(uri: Uri) {
-        // OpenDocument grants read access. Some providers do not support persistence.
-        try { resolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-        catch (_: SecurityException) { /* This provider remains usable for this session. */ }
+        val readWrite = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        // Try read+write first; some providers only allow read, and some do not support persistence at all.
+        try { resolver.takePersistableUriPermission(uri,readWrite) }
+        catch (_: SecurityException) {
+            try { resolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            catch (_: SecurityException) { /* This provider remains usable for this session. */ }
+        }
         val previous=prefs.getString("recent",null)?.let(Uri::parse)
         if(previous!=null && previous!=uri) {
-            try {resolver.releasePersistableUriPermission(previous,Intent.FLAG_GRANT_READ_URI_PERMISSION)} catch (_:SecurityException) {}
+            try {resolver.releasePersistableUriPermission(previous,readWrite)} catch (_:SecurityException) {}
         }
         prefs.edit().putString("recent",uri.toString()).apply()
     }
