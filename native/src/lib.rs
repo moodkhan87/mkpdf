@@ -347,10 +347,12 @@ impl State {
                         if ![90, 180, 270].contains(&degrees) {
                             return Err("Rotation must be 90, 180 or 270".into());
                         }
-                        Edit::RotatePages {
-                            pages: vec![page()?],
-                            degrees,
+                        // "pages" rotates several pages in one undo step; "page" keeps the old single-page form.
+                        let pages = if v["pages"].is_null() { vec![page()?] } else { ids(&v["pages"])? };
+                        if pages.is_empty() {
+                            return Err("No pages to rotate".into());
                         }
+                        Edit::RotatePages { pages, degrees }
                     }
                     "delete" => Edit::DeletePages {
                         pages: vec![page()?],
