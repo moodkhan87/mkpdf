@@ -182,6 +182,23 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             }catch(e:Exception){throw IllegalStateException("Split stopped after $count files: ${e.message}",e)}
         }
     }
+    /** Rotate every page of the document by 90, 180 or 270 degrees clockwise, as one undo step. */
+    fun rotateAll(degrees:Int) {
+        val d=_ui.value.doc?:return
+        searchJob?.cancel()
+        perform {publish(repo.run {call("rotate",d,"pages" to d.pages.indices.toList(),"degrees" to degrees)})}
+    }
+    /** Close the current document and go back to the start screen. Also removes the local recovery copy. */
+    fun closeDocument() {
+        val d=_ui.value.doc?:return
+        searchJob?.cancel()
+        perform {
+            repo.run {call("close",d);clearCache();saf.recovery.delete()}
+            sourceUri=null
+            _ui.update {it.copy(doc=null,query="",hits=emptyList(),selectedHit=-1,searching=false,
+                lines=emptyList(),fields=emptyList(),recoveryAvailable=false)}
+        }
+    }
     fun loadLines(page:Int) {
         val d=_ui.value.doc?:return
         perform {

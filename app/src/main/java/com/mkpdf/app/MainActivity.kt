@@ -3,6 +3,7 @@ package com.mkpdf.app
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,12 +60,15 @@ fun EditorApp(vm: EditorViewModel) {
     var combineBefore by remember { mutableStateOf(false) }
     var splitRanges by remember { mutableStateOf<List<IntRange>>(emptyList()) }
     var discardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var closeAsk by remember { mutableStateOf(false) }
+    var closeAfterSave by remember { mutableStateOf(false) }
     val searchFocus = remember { FocusRequester() }
     fun replaceSafely(action: () -> Unit) { if (doc?.dirty == true) discardAction = action else action() }
     fun closeSearch() { searchOpen = false; vm.search("") }
+    fun requestClose() { if (doc?.dirty == true) closeAsk = true else vm.closeDocument() }
 
     val open = rememberLauncherForActivityResult(OpenPdfWithWrite()) { it?.let(vm::open) }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { it?.let(vm::saveAs) }
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { if (it == null) closeAfterSave = false else vm.saveAs(it) }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importPdf(uri, importAt, importPages) } }
     val images = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importImage(uri, imagePage, imageRect, imageAsPage) } }
     val combine = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) vm.combineWithCurrent(it, combineBefore) }
@@ -73,6 +77,11 @@ fun EditorApp(vm: EditorViewModel) {
     LaunchedEffect(doc?.handle) { if (doc != null) listState.scrollToItem(0) }
     LaunchedEffect(ui.selectedHit, ui.hits) { ui.hits.getOrNull(ui.selectedHit)?.let { listState.animateScrollToItem(it.page) } }
     LaunchedEffect(searchOpen) { if (searchOpen) searchFocus.requestFocus() }
+    BackHandler(enabled = doc != null || searchOpen) { if (searchOpen) closeSearch() else requestClose() }
+    LaunchedEffect(closeAfterSave, doc?.dirty, ui.busy, ui.error) {
+        if (closeAfterSave && ui.error != null) closeAfterSave = false
+        else if (closeAfterSave && doc != null && !doc.dirty && !ui.busy) { closeAfterSave = false; vm.closeDocument() }
+    }
 
     val ready = doc != null && !ui.busy
 
@@ -87,6 +96,7 @@ fun EditorApp(vm: EditorViewModel) {
                         IconButton(onClick = { vm.navigateHit(-1) }, enabled = ui.hits.isNotEmpty()) { Icon(MkIcons.ArrowUp, "Previous match") }
                         IconButton(onClick = { vm.navigateHit(1) }, enabled = ui.hits.isNotEmpty()) { Icon(MkIcons.ArrowDown, "Next match") }
                     } else {
+                        if (doc != null) IconButton(onClick = { requestClose() }, enabled = !ui.busy) { Icon(MkIcons.ArrowBack, "Close file") }
                         Text("${doc?.name ?: "MKpdf"}${if (doc?.dirty == true) " *" else ""}", Modifier.weight(1f).padding(horizontal = 12.dp),
                             maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                         IconButton(onClick = { searchOpen = true }, enabled = ready) { Icon(MkIcons.Search, "Search") }
@@ -101,8 +111,9 @@ fun EditorApp(vm: EditorViewModel) {
                                 item("Open") { replaceSafely { open.launch(arrayOf("application/pdf")) } }
                                 item("New") { replaceSafely { vm.newDocument() } }
                                 item("Save As", doc != null) { save.launch(doc?.name ?: "MKpdf.pdf") }
-                                item("Rotate Right", doc != null) { vm.edit("rotate", "page" to page, "degrees" to 90) }
-                                item("Rotate Left", doc != null) { vm.edit("rotate", "page" to page, "degrees" to 270) }
+                                item("Close", doc != null) { requestClose() }
+                                item("Rotate Right", doc != null) { vm.rotateAll(90) }
+                                item("Rotate Left", doc != null) { vm.rotateAll(270) }
                                 item("Edit", doc != null) { vm.loadLines(page); dialog = "lines" }
                                 item("Add Text", doc != null) { dialog = "text" }
                                 item("Add Image", doc != null) { dialog = "image" }
@@ -141,6 +152,15 @@ fun EditorApp(vm: EditorViewModel) {
         text = { Text("Save a copy first if you need these edits. Continuing replaces the single local recovery slot.") },
         confirmButton = { TextButton(onClick = { val action = discardAction; discardAction = null; action?.invoke() }) { Text("Continue") } },
         dismissButton = { TextButton(onClick = { discardAction = null }) { Text("Cancel") } })
+    if (closeAsk) AlertDialog(onDismissRequest = { closeAsk = false }, title = { Text("Close file?") },
+        text = {
+            Column {
+                Text("This file has unsaved changes.")
+                TextButton(onClick = { closeAsk = false; closeAfterSave = true; save.launch(doc?.name ?: "MKpdf.pdf") }) { Text("Save As") }
+                TextButton(onClick = { closeAsk = false; vm.closeDocument() }) { Text("Ignore changes and close") }
+                TextButton(onClick = { closeAsk = false }) { Text("Cancel") }
+            }
+        }, confirmButton = {})
     ui.error?.let { AlertDialog(onDismissRequest = vm::dismissError, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissError) { Text("OK") } }) }
     ui.message?.let { AlertDialog(onDismissRequest = vm::dismissMessage, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissMessage) { Text("OK") } }) }
 
