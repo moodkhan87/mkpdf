@@ -20,6 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -41,6 +44,15 @@ class MainActivity : ComponentActivity() {
                 primary = androidx.compose.ui.graphics.Color(0xFF4DB6A8),
                 onPrimary = androidx.compose.ui.graphics.Color(0xFF00201C)
             ) else lightColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF005B50))
+            val view = LocalView.current
+            SideEffect {
+                val w = this@MainActivity.window
+                w.statusBarColor = scheme.surface.toArgb()
+                w.navigationBarColor = scheme.surface.toArgb()
+                val controller = WindowCompat.getInsetsController(w, view)
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
             MaterialTheme(colorScheme = scheme) {
                 Surface(Modifier.fillMaxSize()) {
                     EditorApp(vm, mode) { m -> settings.setThemeMode(m); mode = m }
