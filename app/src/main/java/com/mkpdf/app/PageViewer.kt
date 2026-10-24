@@ -2,7 +2,6 @@ package com.mkpdf.app
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -21,6 +20,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,7 +40,6 @@ import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 
 /** Continuous vertical list of pages. Pinch zooms the whole list; drag up/down scrolls; drag sideways pans when zoomed. */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyListState, onField: (FormField) -> Unit) {
     var viewport by remember { mutableStateOf(IntSize.Zero) }
@@ -49,8 +49,9 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     val transform = rememberTransformableState { factor, _, _ -> zoom = (zoom * factor).coerceIn(1f, 4f) }
     val active = ui.hits.getOrNull(ui.selectedHit)
     val margin = with(density) { 8.dp.toPx() }
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-    Box(Modifier.fillMaxSize().background(Color(0xFFE3E8E6)).onSizeChanged { viewport = it }
+    Box(Modifier.fillMaxSize().background(if (dark) Color(0xFF2B2F2E) else Color(0xFFE3E8E6)).onSizeChanged { viewport = it }
         .transformable(transform, canPan = { false })) {
         if (viewport.width > 0) {
             val listWidthPx = viewport.width * zoom

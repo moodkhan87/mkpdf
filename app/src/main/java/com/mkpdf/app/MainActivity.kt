@@ -9,6 +9,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,16 +29,29 @@ class MainActivity : ComponentActivity() {
     private val vm: EditorViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val settings = AppSettings(this)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF005B50))) {
-                EditorApp(vm)
+            var mode by remember { mutableStateOf(settings.themeMode()) }
+            val dark = when (mode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            val scheme = if (dark) darkColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFF4DB6A8),
+                onPrimary = androidx.compose.ui.graphics.Color(0xFF00201C)
+            ) else lightColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF005B50))
+            MaterialTheme(colorScheme = scheme) {
+                Surface(Modifier.fillMaxSize()) {
+                    EditorApp(vm, mode) { m -> settings.setThemeMode(m); mode = m }
+                }
             }
         }
     }
 }
 
 @Composable
-fun EditorApp(vm: EditorViewModel) {
+fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val doc = ui.doc
     val listState = rememberLazyListState()
@@ -122,6 +139,9 @@ fun EditorApp(vm: EditorViewModel) {
                                 item("Delete Page", doc != null) { dialog = "delete" }
                                 item("Combine files", doc != null) { dialog = "combine" }
                                 item("Split files", doc != null) { dialog = "split" }
+                                HorizontalDivider()
+                                item("Theme") { dialog = "theme" }
+                                item("About") { dialog = "about" }
                             }
                         }
                     }
@@ -180,6 +200,29 @@ fun EditorApp(vm: EditorViewModel) {
             dialog = ""
         }
         "lines" -> ExistingTextDialog(ui.lines, ui.busy, { dialog = "" }) { line, text -> vm.edit("edit_line", "page" to page, "line" to line.index, "text" to text); dialog = "" }
+        "theme" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("Theme") },
+            text = {
+                Column {
+                    listOf(ThemeMode.LIGHT to "Light", ThemeMode.DARK to "Dark", ThemeMode.SYSTEM to "System default").forEach { (m, label) ->
+                        Row(Modifier.fillMaxWidth().clickable { onTheme(m); dialog = "" }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(themeMode == m, onClick = null)
+                            Text(label, Modifier.padding(start = 12.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {}, dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } })
+        "about" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("About MKpdf") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("MKpdf is a lightweight PDF viewer and editor for Android, built on PdfCraft, the open-source PDF engine written in Rust by the ArtCraft team and contributors (github.com/storytold/pdfcraft). Many thanks to them: this app would not exist without their work.")
+                    Spacer(Modifier.height(12.dp))
+                    Text("MKpdf was developed with the help of an AI assistant and is still being improved. Once it is ready, its source code will be released as open source, just like the project it is based on.")
+                    Spacer(Modifier.height(12.dp))
+                    Text("PdfCraft © 2026 ArtCraft Team and the PdfCraft contributors. Licensed under MIT or Apache-2.0.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("OK") } })
         "fields" -> Panel("Fill AcroForm fields", { dialog = "" }) {
             if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (ui.fields.isEmpty() && !ui.busy) Text("No AcroForm fields found. This is not OCR.")
