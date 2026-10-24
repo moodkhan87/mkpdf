@@ -2,6 +2,7 @@ package com.mkpdf.app
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -40,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 
 /** Continuous vertical list of pages. Pinch zooms the whole list; drag up/down scrolls; drag sideways pans when zoomed. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyListState, onField: (FormField) -> Unit) {
     var viewport by remember { mutableStateOf(IntSize.Zero) }
