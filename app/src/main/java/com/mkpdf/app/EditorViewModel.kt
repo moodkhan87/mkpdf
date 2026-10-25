@@ -199,6 +199,26 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 lines=emptyList(),fields=emptyList(),recoveryAvailable=false)}
         }
     }
+    /** Open a PDF that another app handed to MKpdf (WhatsApp, email, downloads). Save always asks for a new file. */
+    fun openExternal(uri:Uri)=perform {
+        val value=repo.run {
+            val (name,file)=saf.stage(uri)
+            try {call("open",null,"path" to file.absolutePath,"name" to name)}
+            finally {file.delete()}
+        }; replace(value);sourceUri=null
+    }
+    /** Make a temporary copy of the current document (with unsaved edits) for printing or sharing. */
+    fun prepareCopy(onReady:(File,String,Int)->Unit) {
+        val d=_ui.value.doc?:return
+        val ctx=getApplication<Application>()
+        perform {
+            val file=repo.run {
+                val snap=call("snapshot",d)
+                PrintHelper.copyForShare(ctx,File(snap.getString("path")),d.name)
+            }
+            onReady(file,d.name,d.pages.size)
+        }
+    }
     fun loadLines(page:Int) {
         val d=_ui.value.doc?:return
         perform {

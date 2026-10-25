@@ -24,15 +24,29 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
     private val vm: EditorViewModel by viewModels()
+    private var externalUri by mutableStateOf<Uri?>(null)
+    private fun handleViewIntent(i: android.content.Intent?) {
+        if (i?.action != android.content.Intent.ACTION_VIEW) return
+        val uri = i.data ?: return
+        externalUri = uri
+        i.action = null
+    }
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleViewIntent(intent)
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val settings = AppSettings(this)
+        if (savedInstanceState == null) handleViewIntent(intent)
         setContent {
             var mode by remember { mutableStateOf(settings.themeMode()) }
             val dark = when (mode) {
@@ -55,7 +69,7 @@ class MainActivity : ComponentActivity() {
             }
             MaterialTheme(colorScheme = scheme) {
                 Surface(Modifier.fillMaxSize()) {
-                    EditorApp(vm, mode) { m -> settings.setThemeMode(m); mode = m }
+                    EditorApp(vm, mode, { m -> settings.setThemeMode(m); mode = m }, externalUri, { externalUri = null })
                 }
             }
         }
@@ -63,8 +77,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) -> Unit) {
+fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) -> Unit, external: Uri?, onExternalHandled: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val doc = ui.doc
     val listState = rememberLazyListState()
     val pageCount = doc?.pages?.size ?: 0
@@ -106,6 +121,10 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
     LaunchedEffect(doc?.handle) { if (doc != null) listState.scrollToItem(0) }
     LaunchedEffect(ui.selectedHit, ui.hits) { ui.hits.getOrNull(ui.selectedHit)?.let { listState.animateScrollToItem(it.page) } }
     LaunchedEffect(searchOpen) { if (searchOpen) searchFocus.requestFocus() }
+    LaunchedEffect(external, ui.busy) {
+        val uri = external
+        if (uri != null && !ui.busy) { onExternalHandled(); replaceSafely { vm.openExternal(uri) } }
+    }
     BackHandler(enabled = doc != null || searchOpen) { if (searchOpen) closeSearch() else requestClose() }
     LaunchedEffect(closeAfterSave, doc?.dirty, ui.busy, ui.error) {
         if (closeAfterSave && ui.error != null) closeAfterSave = false
@@ -138,7 +157,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                                 @Composable fun item(label: String, enabled: Boolean = true, action: () -> Unit) =
                                     DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = { menu = false; action() })
                                 item("Open") { replaceSafely { open.launch(arrayOf("application/pdf")) } }
-                                item("New") { replaceSafely { vm.newDocument() } }
+                                // item("New") { replaceSafely { vm.newDocument() } }
                                 item("Save As", doc != null) { save.launch(doc?.name ?: "MKpdf.pdf") }
                                 item("Close", doc != null) { requestClose() }
                                 item("Rotate Right", doc != null) { vm.rotateAll(90) }
@@ -146,11 +165,13 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                                 item("Edit", doc != null) { vm.loadLines(page); dialog = "lines" }
                                 item("Add Text", doc != null) { dialog = "text" }
                                 item("Add Image", doc != null) { dialog = "image" }
-                                item("Add Blank Page", doc != null) { dialog = "blank" }
+                                // item("Add Blank Page", doc != null) { dialog = "blank" }
                                 item("Insert Page from PDF", doc != null) { dialog = "import" }
                                 item("Delete Page", doc != null) { dialog = "delete" }
                                 item("Combine files", doc != null) { dialog = "combine" }
                                 item("Split files", doc != null) { dialog = "split" }
+                                item("Print", doc != null) { vm.prepareCopy { file, name, pages -> PrintHelper.print(context, file, name, pages) } }
+                                item("Send", doc != null) { vm.prepareCopy { file, _, _ -> PrintHelper.share(context, file) } }
                                 HorizontalDivider()
                                 item("Theme") { dialog = "theme" }
                                 item("About") { dialog = "about" }
