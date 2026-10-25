@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlin.math.minOf
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
