@@ -303,8 +303,12 @@ private fun PdfPageItem(
     LaunchedEffect(editing) {
         if (editing != null) {
             hadFocus = false
-            delay(60)
-            try { focus.requestFocus() } catch (_: Exception) {}
+            var focused = false
+            repeat(5) {
+                if (!focused) {
+                    try { focus.requestFocus(); focused = true } catch (_: Exception) { delay(30) }
+                }
+            }
             keyboard?.show()
         }
     }
@@ -313,28 +317,44 @@ private fun PdfPageItem(
         Modifier.size(with(density) { widthPx.toDp() }, with(density) { heightPx.toDp() })
             .background(Color.White)
             .pointerInput(doc.handle, doc.generation, index, fields) {
-                detectTapGestures(onDoubleTap = { onToggleZoom() }, onTap = { pos ->
-                    val x = pos.x / size.width * page.width
-                    val y = pos.y / size.height * page.height
-                    var hit: Pair<FormField, Widget>? = null
-                    for (f in fields) {
-                        val w = f.widgets.firstOrNull { w ->
-                            !w.hidden && w.page == index && x >= w.rect.left && x <= w.rect.right && y >= w.rect.top && y <= w.rect.bottom
-                        }
-                        if (w != null) { hit = f to w; break }
+                // Nearest field within a finger-sized margin around each field (small fields are hard to hit exactly).
+                fun fieldAt(pos: Offset): Pair<FormField, Widget>? {
+                    val sx = size.width / page.width
+                    val sy = size.height / page.height
+                    val x = pos.x / sx
+                    val y = pos.y / sy
+                    val mx = 14.dp.toPx() / sx
+                    val my = 14.dp.toPx() / sy
+                    var best: Pair<FormField, Widget>? = null
+                    var bestDist = Float.MAX_VALUE
+                    for (f in fields) for (w in f.widgets) {
+                        if (w.hidden || w.page != index) continue
+                        val dx = maxOf(w.rect.left - x, 0f, x - w.rect.right) / mx
+                        val dy = maxOf(w.rect.top - y, 0f, y - w.rect.bottom) / my
+                        if (dx > 1f || dy > 1f) continue
+                        val d = dx * dx + dy * dy
+                        if (d < bestDist) { bestDist = d; best = f to w }
                     }
-                    val h = hit
-                    if (h == null) commit()
-                    else {
-                        val (f, w) = h
-                        when {
-                            f.readOnly -> onField(f)
-                            f.kind == "Text" -> { commit(); editText = f.values.firstOrNull().orEmpty(); editing = f to w }
-                            f.kind == "CheckBox" -> { commit(); vm.setField(f.name, !f.values.any { it != "Off" }) }
-                            else -> { commit(); onField(f) }
-                        }
+                    return best
+                }
+                fun openField(h: Pair<FormField, Widget>) {
+                    val (f, w) = h
+                    when {
+                        f.readOnly -> onField(f)
+                        f.kind == "Text" -> { commit(); editText = f.values.firstOrNull().orEmpty(); editing = f to w }
+                        f.kind == "CheckBox" -> { commit(); vm.setField(f.name, !f.values.any { it != "Off" }) }
+                        else -> { commit(); onField(f) }
                     }
-                })
+                }
+                detectTapGestures(
+                    // Act as soon as the finger lifts instead of waiting to see whether it is a double tap.
+                    onPress = { pos ->
+                        val h = fieldAt(pos)
+                        if (h != null && tryAwaitRelease()) openField(h)
+                    },
+                    onDoubleTap = { pos -> if (fieldAt(pos) == null) onToggleZoom() },
+                    onTap = { pos -> if (fieldAt(pos) == null) commit() }
+                )
             },
         contentAlignment = Alignment.Center
     ) {
