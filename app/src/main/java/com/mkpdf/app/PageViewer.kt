@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -57,6 +58,7 @@ private const val MAX_ZOOM = 4f
 @Composable
 fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyListState, onField: (FormField) -> Unit) {
     val currentDoc by rememberUpdatedState(doc)
+    val scope = rememberCoroutineScope()
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     var zoom by remember(doc.handle) { mutableFloatStateOf(1f) }
     var renderZoom by remember(doc.handle) { mutableFloatStateOf(1f) }
@@ -104,7 +106,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
         if (anchor != null) {
             val f = ((cy - anchor.offset) / anchor.size).coerceIn(0f, 1f)
             val newTop = cy - f * pageHeightPx(anchor.index, nz)
-            listState.requestScrollToItem(anchor.index, (gap - newTop).roundToInt())
+            val target = (gap - newTop).roundToInt()
+            scope.launch { listState.scrollToItem(anchor.index, target) }
         }
     }
 
@@ -222,7 +225,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                             onVerticalDrag = { change, dy ->
                                 change.consume()
                                 dragFraction = (dragFraction + dy / track).coerceIn(0f, 1f)
-                                listState.requestScrollToItem((dragFraction * (count - 1)).roundToInt())
+                                val target = (dragFraction * (count - 1)).roundToInt()
+                                scope.launch { listState.scrollToItem(target) }
                             }
                         )
                     }
