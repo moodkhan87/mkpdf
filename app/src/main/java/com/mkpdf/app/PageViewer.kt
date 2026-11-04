@@ -14,6 +14,17 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +52,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -67,6 +80,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     var dragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
     var showHandle by remember { mutableStateOf(false) }
+    var pendingAnchor by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) } // page index, fraction down the page, screen y
     val density = LocalDensity.current
     val gap = with(density) { 8.dp.toPx() }
     val active = ui.hits.getOrNull(ui.selectedHit)
@@ -93,22 +107,34 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
         val r = nz / zoom
         val oldLeft = if (zoom < 1f) viewport.width * (1f - zoom) / 2f else panX
         val newPan = cx - (cx - oldLeft) * r
-        // Anchor on the page that is really under the fingers, using the positions the list has measured.
+        // Remember which page, and which point on it, is under the fingers; the list corrects itself after it re-measures.
+        val topOffset = -listState.layoutInfo.viewportStartOffset
         val anchor = listState.layoutInfo.visibleItemsInfo
             .filter { it.index < currentDoc.pages.size && it.size > 0 }
             .minByOrNull {
-                val top = it.offset.toFloat()
+                val top = (it.offset + topOffset).toFloat()
                 val bottom = top + it.size
                 if (cy < top) top - cy else if (cy > bottom) cy - bottom else 0f
             }
+        if (anchor != null) {
+            val top = (anchor.offset + topOffset).toFloat()
+            pendingAnchor = Triple(anchor.index, ((cy - top) / anchor.size).coerceIn(0f, 1f), cy)
+        }
         zoom = nz
         panX = clampPan(newPan, nz)
-        if (anchor != null) {
-            val f = ((cy - anchor.offset) / anchor.size).coerceIn(0f, 1f)
-            val newTop = cy - f * pageHeightPx(anchor.index, nz)
-            val target = (gap - newTop).roundToInt()
-            scope.launch { listState.scrollToItem(anchor.index, target) }
-        }
+    }
+    // After a zoom change: wait until the list has measured the anchor page at the new size, then correct once.
+    LaunchedEffect(pendingAnchor, zoom) {
+        val a = pendingAnchor ?: return@LaunchedEffect
+        val expected = pageHeightPx(a.first, zoom)
+        val item = withTimeoutOrNull(400) {
+            snapshotFlow { listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == a.first } }
+                .first { it != null && abs(it.size - expected) < 3f }
+        } ?: return@LaunchedEffect
+        val top = (item.offset - listState.layoutInfo.viewportStartOffset).toFloat()
+        val wanted = a.third - a.second * item.size
+        val delta = top - wanted
+        if (abs(delta) > 0.5f) listState.dispatchRawDelta(delta)
     }
 
     val currentPage by remember {
@@ -241,6 +267,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun PdfPageItem(
     doc: Document, index: Int, widthPx: Float, renderWidthPx: Float, hits: List<Hit>, active: Hit?, fields: List<FormField>,
@@ -260,6 +287,28 @@ private fun PdfPageItem(
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = e.message }
     }
+
+    // Typing directly inside a text field on the page.
+    var editing by remember(doc.handle, doc.generation) { mutableStateOf<Pair<FormField, Widget>?>(null) }
+    var editText by remember { mutableStateOf("") }
+    var hadFocus by remember { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    fun commit() {
+        val e = editing ?: return
+        editing = null
+        if (editText != e.first.values.firstOrNull().orEmpty()) vm.setField(e.first.name, editText)
+    }
+    DisposableEffect(Unit) { onDispose { commit() } }
+    LaunchedEffect(editing) {
+        if (editing != null) {
+            hadFocus = false
+            delay(60)
+            try { focus.requestFocus() } catch (_: Exception) {}
+            keyboard?.show()
+        }
+    }
+
     Box(
         Modifier.size(with(density) { widthPx.toDp() }, with(density) { heightPx.toDp() })
             .background(Color.White)
@@ -267,11 +316,24 @@ private fun PdfPageItem(
                 detectTapGestures(onDoubleTap = { onToggleZoom() }, onTap = { pos ->
                     val x = pos.x / size.width * page.width
                     val y = pos.y / size.height * page.height
-                    fields.firstOrNull { f ->
-                        f.widgets.any { w ->
+                    var hit: Pair<FormField, Widget>? = null
+                    for (f in fields) {
+                        val w = f.widgets.firstOrNull { w ->
                             !w.hidden && w.page == index && x >= w.rect.left && x <= w.rect.right && y >= w.rect.top && y <= w.rect.bottom
                         }
-                    }?.let(onField)
+                        if (w != null) { hit = f to w; break }
+                    }
+                    val h = hit
+                    if (h == null) commit()
+                    else {
+                        val (f, w) = h
+                        when {
+                            f.readOnly -> onField(f)
+                            f.kind == "Text" -> { commit(); editText = f.values.firstOrNull().orEmpty(); editing = f to w }
+                            f.kind == "CheckBox" -> { commit(); vm.setField(f.name, !f.values.any { it != "Off" }) }
+                            else -> { commit(); onField(f) }
+                        }
+                    }
                 })
             },
         contentAlignment = Alignment.Center
@@ -287,6 +349,36 @@ private fun PdfPageItem(
                 h.rects.forEach { paint(it, if (h == active) Color(0x88FF8800) else Color(0x66FFE500)) }
             }
             fields.flatMap { it.widgets }.filter { it.page == index && !it.hidden }.forEach { paint(it.rect, Color(0x18008877)) }
+        }
+        editing?.let { (f, w) ->
+            val sx = widthPx / page.width
+            val sy = heightPx / page.height
+            val left = (w.rect.left * sx).roundToInt()
+            val top = (w.rect.top * sy).roundToInt()
+            val boxW = ((w.rect.right - w.rect.left) * sx).coerceAtLeast(60f)
+            val boxH = ((w.rect.bottom - w.rect.top) * sy).coerceAtLeast(28f)
+            val multiline = (w.rect.bottom - w.rect.top) > 40f
+            val fontPx = if (multiline) 11f * sx else (boxH * 0.6f)
+            Box(
+                Modifier.align(Alignment.TopStart)
+                    .offset { IntOffset(left, top) }
+                    .size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })
+                    .background(Color(0xFFDCE8FF))
+                    .padding(horizontal = 3.dp),
+                contentAlignment = if (multiline) Alignment.TopStart else Alignment.CenterStart
+            ) {
+                BasicTextField(
+                    value = editText,
+                    onValueChange = { v -> editText = if (f.maxLength != null) v.take(f.maxLength) else v },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus)
+                        .onFocusChanged { s -> if (s.isFocused) hadFocus = true else if (hadFocus) commit() },
+                    textStyle = TextStyle(color = Color.Black, fontSize = with(density) { fontPx.toSp() }),
+                    singleLine = !multiline,
+                    cursorBrush = SolidColor(Color.Black),
+                    keyboardOptions = KeyboardOptions(imeAction = if (multiline) ImeAction.Default else ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { commit() })
+                )
+            }
         }
         if (bitmap == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
     }
