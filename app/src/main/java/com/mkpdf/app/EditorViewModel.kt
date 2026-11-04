@@ -41,6 +41,15 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         _ui.update {it.copy(doc=d,lines=emptyList(),fields=emptyList())}
         try {repo.run {call("autosave",d)}}
         catch(e:Exception) {_ui.update {it.copy(error="Edit succeeded, but local recovery could not be saved: ${e.message}")}}
+        // Load the form fields in the background so tapping a field works without a menu step.
+        try {
+            val loaded = repo.run { call("fields", d).formFields() }
+            _ui.update { s ->
+                val cur = s.doc
+                if (cur != null && cur.handle == d.handle && cur.generation == d.generation) s.copy(fields = loaded) else s
+            }
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { /* A document without readable form fields still opens normally. */ }
         search(_ui.value.query)
     }
     private suspend fun replace(value:JSONObject) {
