@@ -11,6 +11,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import androidx.compose.ui.text.style.TextOverflow
 
 private val numberKeys = KeyboardOptions(keyboardType = KeyboardType.Number)
 private fun digits(s: String) = s.filter { it.isDigit() }.take(5)
@@ -163,4 +165,41 @@ fun SplitDialog(pageCount: Int, onDismiss: () -> Unit, onConfirm: (List<IntRange
             if (step == 2) TextButton(onClick = { step = 1; error = null }) { Text("Back") }
             else TextButton(onClick = onDismiss) { Text("Cancel") }
         })
+}
+/** Combine files: the chosen files in order. Move them up/down, remove, add more, then combine. */
+@Composable
+fun CombineOrderDialog(
+    items: List<Pair<String, Uri>>, onDismiss: () -> Unit,
+    onAddMore: (List<Pair<String, Uri>>) -> Unit, onConfirm: (List<Uri>) -> Unit
+) {
+    var list by remember(items) { mutableStateOf(items) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Combine files") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Files are merged in this order. Use the arrows to change it.", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                list.forEachIndexed { i, item ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${i + 1}.", Modifier.width(28.dp))
+                        Text(item.first, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IconButton(
+                            onClick = { list = list.toMutableList().also { val x = it.removeAt(i); it.add(i - 1, x) } },
+                            enabled = i > 0, modifier = Modifier.size(36.dp)
+                        ) { Icon(MkIcons.ArrowUp, "Move up") }
+                        IconButton(
+                            onClick = { list = list.toMutableList().also { val x = it.removeAt(i); it.add(i + 1, x) } },
+                            enabled = i < list.lastIndex, modifier = Modifier.size(36.dp)
+                        ) { Icon(MkIcons.ArrowDown, "Move down") }
+                        IconButton(
+                            onClick = { list = list.toMutableList().also { it.removeAt(i) } },
+                            modifier = Modifier.size(36.dp)
+                        ) { Icon(MkIcons.Close, "Remove") }
+                    }
+                }
+                TextButton(onClick = { onAddMore(list) }) { Text("Add more files") }
+                if (list.size < 2) Text("Choose at least two files.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(list.map { it.second }) }, enabled = list.size >= 2) { Text("Combine") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }

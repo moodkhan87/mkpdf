@@ -24,6 +24,8 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
     private var searchJob:Job?=null
     /** The file the current document was opened from (or last saved to). Null means Save falls back to Save As. */
     private var sourceUri:Uri?=null
+        /** True for a document that exists only in memory (for example a combined file): it must count as unsaved. */
+    private var forceDirty=false
     init { perform {repo.run {init()};_ui.update {it.copy(recoveryAvailable=repo.saf.recovery.isFile)}} }
     fun dismissError() {_ui.update {it.copy(error=null)}}
     fun dismissMessage() {_ui.update {it.copy(message=null)}}
@@ -37,7 +39,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         }
     }
     private suspend fun publish(value:JSONObject) {
-        val d=value.document()
+        val d=value.document().let {if(forceDirty)it.copy(dirty=true) else it}
         _ui.update {it.copy(doc=d,lines=emptyList(),fields=emptyList())}
         try {repo.run {call("autosave",d)}}
         catch(e:Exception) {_ui.update {it.copy(error="Edit succeeded, but local recovery could not be saved: ${e.message}")}}
@@ -52,7 +54,8 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         catch (e: Exception) { /* A document without readable form fields still opens normally. */ }
         search(_ui.value.query)
     }
-    private suspend fun replace(value:JSONObject) {
+    private suspend fun replace(value:JSONObject,unsaved:Boolean=false) {
+        forceDirty=unsaved
         val old=_ui.value.doc
         searchJob?.cancel()
         publish(value)
@@ -130,7 +133,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             val value=repo.run {
                 val snap=call("snapshot",d)
                 saf.write(uri,File(snap.getString("path")))
-                call("mark_saved",d)
+                call("mark_saved",d).also {forceDirty=false}
             };publish(value);sourceUri=uri;_ui.update {it.copy(message="Saved a PDF copy. Original source was not overwritten.")}
         }
     }
@@ -147,7 +150,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 val value=repo.run {
                     val snap=call("snapshot",d)
                     saf.write(uri,File(snap.getString("path")))
-                    call("mark_saved",d)
+                    call("mark_saved",d).also {forceDirty=false}
                 }
                 publish(value)
                 _ui.update {it.copy(message="Saved.")}
@@ -227,6 +230,19 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             }
             onReady(file,d.name,d.pages.size)
         }
+    }
+        /** Combine the given files, in order, into a new unsaved document. */
+    fun combineFiles(uris:List<Uri>)=perform {
+        if(uris.size<2)throw IllegalArgumentException("Select at least two PDFs")
+        if(uris.size>32)throw IllegalArgumentException("Combine up to 32 files at once")
+        val value=repo.run {
+            val staged=mutableListOf<Pair<String,File>>()
+            try {
+                uris.forEach {staged+=saf.stage(it)}
+                call("combine",null,"inputs" to staged.map {(name,file)->obj("name" to name,"path" to file.absolutePath)})
+            } finally {staged.forEach {it.second.delete()}}
+        }
+        replace(value,true);sourceUri=null
     }
     fun loadLines(page:Int) {
         val d=_ui.value.doc?:return

@@ -102,6 +102,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
     var imagePage by remember { mutableIntStateOf(0) }
     var selectedField by remember { mutableStateOf<String?>(null) }
     var combineBefore by remember { mutableStateOf(false) }
+        var combineItems by remember { mutableStateOf<List<Pair<String, Uri>>>(emptyList()) }
     var splitRanges by remember { mutableStateOf<List<IntRange>>(emptyList()) }
     var discardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var closeAsk by remember { mutableStateOf(false) }
@@ -115,7 +116,15 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { if (it == null) closeAfterSave = false else vm.saveAs(it) }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importPdf(uri, importAt, importPages) } }
     val images = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importImage(uri, imagePage, imageRect, imageAsPage) } }
-    val combine = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) vm.combineWithCurrent(it, combineBefore) }
+        val combine = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
+        val added = picked.map { u ->
+            val name = context.contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: u.lastPathSegment ?: "PDF"
+            name to u
+        }
+        combineItems = combineItems + added
+        if (combineItems.isNotEmpty()) dialog = "combineOrder"
+    }
     val split = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { it?.let { tree -> vm.splitRanges(tree, splitRanges) } }
 
     LaunchedEffect(doc?.handle) { if (doc != null) listState.scrollToItem(0) }
@@ -168,7 +177,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                                 // item("Add Blank Page", doc != null) { dialog = "blank" }
                                 item("Insert Page from PDF", doc != null) { dialog = "import" }
                                 item("Delete Page", doc != null) { dialog = "delete" }
-                                item("Combine files", doc != null) { dialog = "combine" }
+                                item("Combine files") { combineItems = emptyList(); combine.launch(arrayOf("application/pdf")) }
                                 item("Split files", doc != null) { dialog = "split" }
                                 item("Print", doc != null) { vm.prepareCopy { file, name, pages -> PrintHelper.print(context, file, name, pages) } }
                                 item("Send", doc != null) { vm.prepareCopy { file, _, _ -> PrintHelper.share(context, file) } }
@@ -225,7 +234,9 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
             importPages = null; importAt = if (after) no else no - 1; dialog = ""; import.launch(arrayOf("application/pdf"))
         }
         "delete" -> DeletePagesDialog(pageCount, page + 1, { dialog = "" }) { pages -> dialog = ""; vm.deletePages(pages) }
-        "combine" -> CombinePositionDialog({ dialog = "" }) { before -> combineBefore = before; dialog = ""; combine.launch(arrayOf("application/pdf")) }
+        "combineOrder" -> CombineOrderDialog(combineItems, { dialog = ""; combineItems = emptyList() },
+            { current -> combineItems = current; dialog = ""; combine.launch(arrayOf("application/pdf")) },
+            { uris -> dialog = ""; combineItems = emptyList(); replaceSafely { vm.combineFiles(uris) } })
         "split" -> SplitDialog(pageCount, { dialog = "" }) { ranges -> splitRanges = ranges; dialog = ""; split.launch(null) }
         "text", "image" -> PlacementDialog(dialog == "image", { dialog = "" }) { text, rect, size ->
             if (dialog == "text") vm.edit("add_text", "page" to page, "text" to text, "rect" to rect, "size" to size)
