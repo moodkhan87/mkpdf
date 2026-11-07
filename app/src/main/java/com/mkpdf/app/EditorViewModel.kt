@@ -244,6 +244,41 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         }
         replace(value,true);sourceUri=null
     }
+        /** Add other files to the OPEN document (before or after it, in the order given; null marks the open document). Each file is one undo step. */
+    fun combineIntoOpen(items:List<Uri?>) {
+        val d0=_ui.value.doc?:return
+        val idx=items.indexOf(null)
+        if(idx<0||items.size<2)return
+        if(items.size>32){_ui.update {it.copy(error="Combine up to 32 files at once")};return}
+        val before=items.subList(0,idx).filterNotNull()
+        val after=items.subList(idx+1,items.size).filterNotNull()
+        searchJob?.cancel()
+        perform {
+            var cur=d0
+            var last:JSONObject?=null
+            // Files that go before the open document are inserted at the start, the last of them first.
+            for(u in before.asReversed()) {
+                val v=repo.run {
+                    val (name,file)=saf.stage(u)
+                    try {call("insert_pdf",cur,"path" to file.absolutePath,"name" to name,"at" to 0,"pages" to null)}
+                    finally {file.delete()}
+                }
+                cur=v.document();last=v
+            }
+            for(u in after) {
+                val at=cur.pages.size
+                val v=repo.run {
+                    val (name,file)=saf.stage(u)
+                    try {call("insert_pdf",cur,"path" to file.absolutePath,"name" to name,"at" to at,"pages" to null)}
+                    finally {file.delete()}
+                }
+                cur=v.document();last=v
+            }
+            last?.let {publish(it)}
+            // The result is a new document in practice: Save always asks for a new file, the original is untouched.
+            sourceUri=null
+        }
+    }
     fun loadLines(page:Int) {
         val d=_ui.value.doc?:return
         perform {

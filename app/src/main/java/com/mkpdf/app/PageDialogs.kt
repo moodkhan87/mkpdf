@@ -169,8 +169,8 @@ fun SplitDialog(pageCount: Int, onDismiss: () -> Unit, onConfirm: (List<IntRange
 /** Combine files: the chosen files in order. Move them up/down, remove, add more, then combine. */
 @Composable
 fun CombineOrderDialog(
-    items: List<Pair<String, Uri>>, onDismiss: () -> Unit,
-    onAddMore: (List<Pair<String, Uri>>) -> Unit, onConfirm: (List<Uri>) -> Unit
+    items: List<Pair<String, Uri?>>, onDismiss: () -> Unit,
+    onAddMore: (List<Pair<String, Uri?>>) -> Unit, onConfirm: (List<Uri?>) -> Unit
 ) {
     var list by remember(items) { mutableStateOf(items) }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Combine files") },
@@ -181,7 +181,7 @@ fun CombineOrderDialog(
                 list.forEachIndexed { i, item ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}.", Modifier.width(28.dp))
-                        Text(item.first, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(item.first + if (item.second == null) "  (open file)" else "", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         IconButton(
                             onClick = { list = list.toMutableList().also { val x = it.removeAt(i); it.add(i - 1, x) } },
                             enabled = i > 0, modifier = Modifier.size(36.dp)

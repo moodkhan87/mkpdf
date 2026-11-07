@@ -102,7 +102,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
     var imagePage by remember { mutableIntStateOf(0) }
     var selectedField by remember { mutableStateOf<String?>(null) }
     var combineBefore by remember { mutableStateOf(false) }
-        var combineItems by remember { mutableStateOf<List<Pair<String, Uri>>>(emptyList()) }
+    var combineItems by remember { mutableStateOf<List<Pair<String, Uri?>>>(emptyList()) }
     var splitRanges by remember { mutableStateOf<List<IntRange>>(emptyList()) }
     var discardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var closeAsk by remember { mutableStateOf(false) }
@@ -177,7 +177,10 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                                 // item("Add Blank Page", doc != null) { dialog = "blank" }
                                 item("Insert Page from PDF", doc != null) { dialog = "import" }
                                 item("Delete Page", doc != null) { dialog = "delete" }
-                                item("Combine files") { combineItems = emptyList(); combine.launch(arrayOf("application/pdf")) }
+                                item("Combine files") {
+                                    combineItems = if (doc != null) listOf(doc.name to null) else emptyList()
+                                    combine.launch(arrayOf("application/pdf"))
+                                }
                                 item("Split files", doc != null) { dialog = "split" }
                                 item("Print", doc != null) { vm.prepareCopy { file, name, pages -> PrintHelper.print(context, file, name, pages) } }
                                 item("Send", doc != null) { vm.prepareCopy { file, _, _ -> PrintHelper.share(context, file) } }
@@ -236,7 +239,10 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
         "delete" -> DeletePagesDialog(pageCount, page + 1, { dialog = "" }) { pages -> dialog = ""; vm.deletePages(pages) }
         "combineOrder" -> CombineOrderDialog(combineItems, { dialog = ""; combineItems = emptyList() },
             { current -> combineItems = current; dialog = ""; combine.launch(arrayOf("application/pdf")) },
-            { uris -> dialog = ""; combineItems = emptyList(); replaceSafely { vm.combineFiles(uris) } })
+            { uris ->
+                dialog = ""; combineItems = emptyList()
+                if (uris.contains(null)) vm.combineIntoOpen(uris) else replaceSafely { vm.combineFiles(uris.filterNotNull()) }
+            })
         "split" -> SplitDialog(pageCount, { dialog = "" }) { ranges -> splitRanges = ranges; dialog = ""; split.launch(null) }
         "text", "image" -> PlacementDialog(dialog == "image", { dialog = "" }) { text, rect, size ->
             if (dialog == "text") vm.edit("add_text", "page" to page, "text" to text, "rect" to rect, "size" to size)
