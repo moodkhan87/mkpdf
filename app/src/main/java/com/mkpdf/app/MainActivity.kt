@@ -107,13 +107,21 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
     var discardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var closeAsk by remember { mutableStateOf(false) }
     var closeAfterSave by remember { mutableStateOf(false) }
+        var exitAfter by remember { mutableStateOf(false) }
+    var exiting by remember { mutableStateOf(false) }
     val searchFocus = remember { FocusRequester() }
     fun replaceSafely(action: () -> Unit) { if (doc?.dirty == true) discardAction = action else action() }
     fun closeSearch() { searchOpen = false; vm.search("") }
     fun requestClose() { if (doc?.dirty == true) closeAsk = true else vm.closeDocument() }
+        fun exitApp() { (context as? android.app.Activity)?.finishAffinity() }
+    fun requestExit() {
+        if (doc == null) exitApp()
+        else if (doc.dirty) { exitAfter = true; closeAsk = true }
+        else { exiting = true; vm.closeDocument() }
+    }
 
     val open = rememberLauncherForActivityResult(OpenPdfWithWrite()) { it?.let(vm::open) }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { if (it == null) closeAfterSave = false else vm.saveAs(it) }
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { if (it == null) { closeAfterSave = false; exiting = false } else vm.saveAs(it) }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importPdf(uri, importAt, importPages) } }
     val images = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> vm.importImage(uri, imagePage, imageRect, imageAsPage) } }
         val combine = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
@@ -139,6 +147,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
         if (closeAfterSave && ui.error != null) closeAfterSave = false
         else if (closeAfterSave && doc != null && !doc.dirty && !ui.busy) { closeAfterSave = false; vm.closeDocument() }
     }
+        LaunchedEffect(exiting, doc) { if (exiting && doc == null) exitApp() }
 
     val ready = doc != null && !ui.busy
 
@@ -184,6 +193,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                                 item("Split files", doc != null) { dialog = "split" }
                                 item("Print", doc != null) { vm.prepareCopy { file, name, pages -> PrintHelper.print(context, file, name, pages) } }
                                 item("Send", doc != null) { vm.prepareCopy { file, _, _ -> PrintHelper.share(context, file) } }
+                                item("Exit") { requestExit() }
                                 HorizontalDivider()
                                 item("Theme") { dialog = "theme" }
                                 item("About") { dialog = "about" }
@@ -217,13 +227,13 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
         text = { Text("Save a copy first if you need these edits. Continuing replaces the single local recovery slot.") },
         confirmButton = { TextButton(onClick = { val action = discardAction; discardAction = null; action?.invoke() }) { Text("Continue") } },
         dismissButton = { TextButton(onClick = { discardAction = null }) { Text("Cancel") } })
-    if (closeAsk) AlertDialog(onDismissRequest = { closeAsk = false }, title = { Text("Close file?") },
+    if (closeAsk) AlertDialog(onDismissRequest = { closeAsk = false; exitAfter = false }, title = { Text(if (exitAfter) "Exit MKpdf?" else "Close file?") },
         text = {
             Column {
                 Text("This file has unsaved changes.")
-                TextButton(onClick = { closeAsk = false; closeAfterSave = true; save.launch(doc?.name ?: "MKpdf.pdf") }) { Text("Save As") }
-                TextButton(onClick = { closeAsk = false; vm.closeDocument() }) { Text("Ignore changes and close") }
-                TextButton(onClick = { closeAsk = false }) { Text("Cancel") }
+                TextButton(onClick = { closeAsk = false; closeAfterSave = true; exiting = exitAfter; exitAfter = false; save.launch(doc?.name ?: "MKpdf.pdf") }) { Text("Save As") }
+                TextButton(onClick = { closeAsk = false; exiting = exitAfter; exitAfter = false; vm.closeDocument() }) { Text(if (exitAfter) "Ignore changes and exit" else "Ignore changes and close") }
+                TextButton(onClick = { closeAsk = false; exitAfter = false }) { Text("Cancel") }
             }
         }, confirmButton = {})
     ui.error?.let { AlertDialog(onDismissRequest = vm::dismissError, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissError) { Text("OK") } }) }
