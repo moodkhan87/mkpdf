@@ -21,11 +21,12 @@ pdfcraft-edit = { path = "../vendor/pdfcraft/crates/edit" }
 hayro-interpret = { path = "../vendor/pdfcraft/vendor/hayro-interpret" }
 hayro = { path = "../vendor/pdfcraft/vendor/hayro" }
 hayro-syntax = { path = "../vendor/pdfcraft/vendor/hayro-syntax" }
+hayro-cmap = { path = "../vendor/pdfcraft/vendor/hayro-cmap" }
+hayro-postscript = { path = "../vendor/pdfcraft/vendor/hayro-postscript" }
 hayro-jbig2 = { path = "../vendor/pdfcraft/vendor/hayro-jbig2" }
 lopdf = { path = "../vendor/pdfcraft/vendor/lopdf" }
-winit = { path = "../vendor/pdfcraft/vendor/winit" }
-egui-wgpu = { path = "../vendor/pdfcraft/vendor/egui-wgpu" }
 vello_common = { path = "../vendor/pdfcraft/vendor/vello_common" }
+vello_cpu = { path = "../vendor/pdfcraft/vendor/vello_cpu" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
