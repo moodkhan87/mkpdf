@@ -2,7 +2,7 @@
 """Materialize a pinned upstream checkout, preserving its patched renderer dependencies."""
 import pathlib, subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-REV = "43550c448db3ba91753f638e3843c0da036bbd60"
+REV = "8c572792d6760bdc903d6f9a032e3e38e8f71cb8"
 DEST = ROOT / "vendor/pdfcraft"
 def run(*args): subprocess.run(args, cwd=ROOT, check=True)
 if not (DEST / ".git").exists():
