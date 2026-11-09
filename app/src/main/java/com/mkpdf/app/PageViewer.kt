@@ -295,6 +295,7 @@ private fun PdfPageItem(
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     fun commit() {
+        hadFocus = false
         val e = editing ?: return
         editing = null
         if (editText != e.first.values.firstOrNull().orEmpty()) vm.setField(e.first.name, editText)
