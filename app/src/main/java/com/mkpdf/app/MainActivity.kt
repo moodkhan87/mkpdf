@@ -212,7 +212,8 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = { open.launch(arrayOf("application/pdf")) }, enabled = !ui.busy) { Text("Open") }
-                    OutlinedButton(onClick = { vm.newDocument() }, enabled = !ui.busy) { Text("New") }
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = { combineItems = emptyList(); combine.launch(arrayOf("application/pdf")) }, enabled = !ui.busy) { Text("Combine files") }
                 }
             }
         } else {

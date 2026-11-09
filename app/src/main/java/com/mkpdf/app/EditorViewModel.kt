@@ -38,9 +38,9 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             finally {_ui.update {it.copy(busy=false)}}
         }
     }
-    private suspend fun publish(value:JSONObject) {
+    private suspend fun publish(value:JSONObject,keepFields:Boolean=false) {
         val d=value.document().let {if(forceDirty)it.copy(dirty=true) else it}
-        _ui.update {it.copy(doc=d,lines=emptyList(),fields=emptyList())}
+        _ui.update {it.copy(doc=d,lines=emptyList(),fields=if(keepFields)it.fields else emptyList())}
         try {repo.run {call("autosave",d)}}
         catch(e:Exception) {_ui.update {it.copy(error="Edit succeeded, but local recovery could not be saved: ${e.message}")}}
         // Load the form fields in the background so tapping a field works without a menu step.
@@ -293,12 +293,14 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         perform {val fields=repo.run {call("fields",d).formFields()};_ui.update {it.copy(fields=fields)}}
     }
     fun setField(name:String,value:Any?) {
-        val d=_ui.value.doc?:return
-        perform {
-            val result=repo.run {call("set_field",d,"name" to name,"value" to value)}
-            publish(result)
-            val fields=repo.run {call("fields",_ui.value.doc).formFields()}
-            _ui.update {it.copy(fields=fields)}
+        viewModelScope.launch {
+            // Another operation (for example the previous field's autosave) may still be running: wait instead of dropping the edit.
+            while(_ui.value.busy) delay(40)
+            val d=_ui.value.doc?:return@launch
+            perform {
+                val result=repo.run {call("set_field",d,"name" to name,"value" to value)}
+                publish(result,keepFields=true)
+            }
         }
     }
     suspend fun render(d:Document,page:Int,width:Int):Bitmap=repo.run {render(d,page,width)}

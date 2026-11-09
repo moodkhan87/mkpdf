@@ -276,14 +276,14 @@ private fun PdfPageItem(
     val page = doc.pages[index]
     val density = LocalDensity.current
     val heightPx = widthPx * page.height / page.width
-    var bitmap by remember(doc.handle, doc.generation, index) { mutableStateOf<Bitmap?>(null) }
+    var shown by remember(doc.handle, index) { mutableStateOf<Pair<Bitmap, Int>?>(null) } // picture + page rotation when it was drawn
     var error by remember(doc.handle, doc.generation, index) { mutableStateOf<String?>(null) }
     // The native raster limit is about 8 million pixels, so cap the width for tall pages.
     val maxWidth = sqrt(8_000_000.0 * page.width / page.height).toInt()
     val desired = renderWidthPx.toInt().coerceIn(64, maxOf(64, minOf(4096, maxWidth)))
     LaunchedEffect(doc.handle, doc.generation, index, desired) {
-        if (bitmap != null) delay(120) // keep the old bitmap scaled, refresh detail afterwards
-        try { bitmap = vm.render(doc, index, desired); error = null }
+        if (shown != null) delay(40) // keep the old picture on screen, replace it when the new one is ready
+        try { shown = vm.render(doc, index, desired) to page.rotation; error = null }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = e.message }
     }
@@ -358,7 +358,18 @@ private fun PdfPageItem(
             },
         contentAlignment = Alignment.Center
     ) {
-        bitmap?.let { Image(it.asImageBitmap(), "PDF page ${index + 1}", Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
+        shown?.let { (bmp, rot) ->
+            // After a rotation the old picture is turned to match until the new one arrives, so the page never flashes white.
+            val delta = ((page.rotation - rot) % 360 + 360) % 360
+            val swap = delta == 90 || delta == 270
+            val w = if (swap) heightPx else widthPx
+            val h = if (swap) widthPx else heightPx
+            Image(
+                bmp.asImageBitmap(), "PDF page ${index + 1}",
+                Modifier.requiredSize(with(density) { w.toDp() }, with(density) { h.toDp() }).graphicsLayer { rotationZ = delta.toFloat() },
+                contentScale = ContentScale.FillBounds
+            )
+        }
         Canvas(Modifier.fillMaxSize()) {
             val sx = size.width / page.width
             val sy = size.height / page.height
@@ -400,6 +411,6 @@ private fun PdfPageItem(
                 )
             }
         }
-        if (bitmap == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
+        if (shown == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
     }
 }
