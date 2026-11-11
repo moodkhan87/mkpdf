@@ -237,7 +237,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             } else throw e
         }
     }
-        fun openWithPassword(uri: Uri, password: String) = perform {
+    fun openWithPassword(uri: Uri, password: String) = perform {
         try {
             val value = repo.run {
                 val (name, file) = saf.stage(uri)
@@ -248,9 +248,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 }
             }
             replace(value)
-            // Keep sourceUri only for normal open, not external
-            if (sourceUri == null && _ui.value.passwordUri == uri) sourceUri = null
-            else sourceUri = uri
+            sourceUri = uri          // بعد نجاح كلمة المرور نعتبره ملف عادي يمكن حفظه في مكانه
             _ui.update { it.copy(passwordUri = null) }
         } catch (e: Exception) {
             val msg = e.message ?: ""
@@ -258,6 +256,10 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 _ui.update { it.copy(passwordUri = uri, error = msg) }
             } else throw e
         }
+    }
+
+    fun clearPasswordPrompt() {
+        _ui.update { it.copy(passwordUri = null, error = null) }
     }
     /** Make a temporary copy of the current document (with unsaved edits) for printing or sharing. */
     fun prepareCopy(onReady:(File,String,Int)->Unit) {
