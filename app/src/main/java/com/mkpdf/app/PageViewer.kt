@@ -319,7 +319,7 @@ private fun PdfPageItem(
             .background(Color.White)
             .pointerInput(doc.handle, doc.generation, index, fields) {
                 // Nearest field within a finger-sized margin around each field (small fields are hard to hit exactly).
-                fun fieldAt(pos: Offset): Pair<FormField, Widget>? {
+                  fun fieldAt(pos: Offset): Pair<FormField, Widget>? {
                     val sx = size.width / page.width
                     val sy = size.height / page.height
                     val x = pos.x / sx
@@ -328,13 +328,16 @@ private fun PdfPageItem(
                     val my = 14.dp.toPx() / sy
                     var best: Pair<FormField, Widget>? = null
                     var bestDist = Float.MAX_VALUE
-                    for (f in fields) for (w in f.widgets) {
-                        if (w.hidden || w.page != index) continue
-                        val dx = maxOf(w.rect.left - x, 0f, x - w.rect.right) / mx
-                        val dy = maxOf(w.rect.top - y, 0f, y - w.rect.bottom) / my
-                        if (dx > 1f || dy > 1f) continue
-                        val d = dx * dx + dy * dy
-                        if (d < bestDist) { bestDist = d; best = f to w }
+                    for (f in fields) {
+                        if (f.readOnly) continue
+                        for (w in f.widgets) {
+                            if (w.hidden || w.page != index) continue
+                            val dx = maxOf(w.rect.left - x, 0f, x - w.rect.right) / mx
+                            val dy = maxOf(w.rect.top - y, 0f, y - w.rect.bottom) / my
+                            if (dx > 1f || dy > 1f) continue
+                            val d = dx * dx + dy * dy
+                            if (d < bestDist) { bestDist = d; best = f to w }
+                        }
                     }
                     return best
                 }
@@ -380,7 +383,7 @@ private fun PdfPageItem(
             hits.filter { it.page == index }.forEach { h ->
                 h.rects.forEach { paint(it, if (h == active) Color(0x88FF8800) else Color(0x66FFE500)) }
             }
-            fields.flatMap { it.widgets }.filter { it.page == index && !it.hidden }.forEach { paint(it.rect, Color(0x18008877)) }
+            fields.filter { !it.readOnly }.flatMap { it.widgets }.filter { it.page == index && !it.hidden }.forEach { paint(it.rect, Color(0x18008877)) }
         }
         editing?.let { (f, w) ->
             val sx = widthPx / page.width
