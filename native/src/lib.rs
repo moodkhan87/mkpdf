@@ -189,15 +189,22 @@ impl State {
         c.texts.insert(page, text.clone());
         Ok(text)
     }
-    fn open(&mut self, name: &str, bytes: Arc<Vec<u8>>) -> R<DocId> {
+    fn open(&mut self, name: &str, bytes: Arc<Vec<u8>>, password: Option<&str>) -> R<DocId> {
         let id = self
             .session
-            .open(name.to_owned(), None, bytes, None)
-            .map_err(|e| e.to_string())?;
-        if self.doc(id)?.info.encrypted {
-            self.session.close(id);
-            return Err("Encrypted PDFs are outside MKpdf's scope".into());
-        }
+            .open(name.to_owned(), password, bytes, None)
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("WrongPassword") || msg.contains("password") || msg.contains("Password") {
+                    if password.is_none() {
+                        "PASSWORD_REQUIRED".into()
+                    } else {
+                        "WRONG_PASSWORD".into()
+                    }
+                } else {
+                    msg
+                }
+            })?;
         if !self.doc(id)?.editable() {
             self.session.close(id);
             return Err("The engine could not create an editable document".into());
@@ -214,7 +221,8 @@ impl State {
         }
         if op == "open" {
             let p = self.private_path(string(&v, "path")?)?;
-            let id = self.open(string(&v, "name")?, read_file(&p)?)?;
+            let password = v["password"].as_str();
+            let id = self.open(string(&v, "name")?, read_file(&p)?, password)?;
             return self.info(id);
         }
         if op == "blank" {
@@ -222,7 +230,7 @@ impl State {
                 .session
                 .create_blank(595.0, 842.0, 1)
                 .map_err(|e| e.to_string())?;
-            let id = self.open("Untitled.pdf", bytes)?;
+            let id = self.open("Untitled.pdf", bytes, None)?;
             return self.info(id);
         }
         if op == "combine" {
@@ -243,7 +251,7 @@ impl State {
                 sources.push((string(input, "name")?.to_owned(), bytes));
             }
             let bytes = self.session.combine(&sources).map_err(|e| e.to_string())?;
-            let id = self.open("Combined.pdf", bytes)?;
+            let id = self.open("Combined.pdf", bytes, None)?;
             return self.info(id);
         }
         let id = DocId(v["handle"].as_u64().ok_or("Expected handle")?);
