@@ -1,5 +1,5 @@
 package com.mkpdf.app
-
+import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -16,7 +16,8 @@ data class FormField(val name: String, val kind: String, val values: List<String
 data class UiState(val doc: Document? = null, val busy: Boolean = false, val error: String? = null,
     val message: String? = null, val query: String = "", val hits: List<Hit> = emptyList(),
     val searching: Boolean = false, val selectedHit: Int = -1, val fields: List<FormField> = emptyList(),
-    val lines: List<TextLine> = emptyList(), val recoveryAvailable: Boolean = false)
+    val lines: List<TextLine> = emptyList(), val recoveryAvailable: Boolean = false,
+    val passwordUri: Uri? = null)
 fun obj(vararg values: Pair<String, Any?>) = JSONObject().apply {
     values.forEach { (k,v) -> put(k, when(v) { null -> JSONObject.NULL; is List<*> -> JSONArray(v); else -> v }) }
 }
