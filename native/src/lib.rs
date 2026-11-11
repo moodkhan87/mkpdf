@@ -192,7 +192,7 @@ impl State {
     fn open(&mut self, name: &str, bytes: Arc<Vec<u8>>, password: Option<&str>) -> R<DocId> {
         let id = self
             .session
-            .open(name.to_owned(), password, bytes, None)
+            .open(name.to_owned(), None, bytes, password)
             .map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("WrongPassword") || msg.contains("password") || msg.contains("Password") {
