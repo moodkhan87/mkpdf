@@ -63,11 +63,20 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
     }
     fun newDocument()=perform {replace(repo.run {call("blank")});sourceUri=null}
     fun open(uri:Uri)=perform {
-        val value=repo.run {
-            val (name,file)=saf.stage(uri)
-            try {val d=call("open",null,"path" to file.absolutePath,"name" to name);saf.persistRead(uri);d}
-            finally {file.delete()}
-        }; replace(value);sourceUri=uri
+        try {
+            val value=repo.run {
+                val (name,file)=saf.stage(uri)
+                try {val d=call("open",null,"path" to file.absolutePath,"name" to name);saf.persistRead(uri);d}
+                finally {file.delete()}
+            }
+            replace(value);sourceUri=uri
+            _ui.update { it.copy(passwordUri = null) }
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg == "PASSWORD_REQUIRED" || msg == "WRONG_PASSWORD") {
+                _ui.update { it.copy(passwordUri = uri, error = msg) }
+            } else throw e
+        }
     }
     fun reopenRecent() {repo.saf.recent()?.let(::open)}
     fun recover()=perform {
@@ -208,16 +217,47 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             repo.run {call("close",d);clearCache();saf.recovery.delete()}
             sourceUri=null
             _ui.update {it.copy(doc=null,query="",hits=emptyList(),selectedHit=-1,searching=false,
-                lines=emptyList(),fields=emptyList(),recoveryAvailable=false)}
+                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null)}
         }
     }
     /** Open a PDF that another app handed to MKpdf (WhatsApp, email, downloads). Save always asks for a new file. */
     fun openExternal(uri:Uri)=perform {
-        val value=repo.run {
-            val (name,file)=saf.stage(uri)
-            try {call("open",null,"path" to file.absolutePath,"name" to name)}
-            finally {file.delete()}
-        }; replace(value);sourceUri=null
+        try {
+            val value=repo.run {
+                val (name,file)=saf.stage(uri)
+                try {call("open",null,"path" to file.absolutePath,"name" to name)}
+                finally {file.delete()}
+            }
+            replace(value);sourceUri=null
+            _ui.update { it.copy(passwordUri = null) }
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg == "PASSWORD_REQUIRED" || msg == "WRONG_PASSWORD") {
+                _ui.update { it.copy(passwordUri = uri, error = msg) }
+            } else throw e
+        }
+    }
+        fun openWithPassword(uri: Uri, password: String) = perform {
+        try {
+            val value = repo.run {
+                val (name, file) = saf.stage(uri)
+                try {
+                    call("open", null, "path" to file.absolutePath, "name" to name, "password" to password)
+                } finally {
+                    file.delete()
+                }
+            }
+            replace(value)
+            // Keep sourceUri only for normal open, not external
+            if (sourceUri == null && _ui.value.passwordUri == uri) sourceUri = null
+            else sourceUri = uri
+            _ui.update { it.copy(passwordUri = null) }
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg == "PASSWORD_REQUIRED" || msg == "WRONG_PASSWORD") {
+                _ui.update { it.copy(passwordUri = uri, error = msg) }
+            } else throw e
+        }
     }
     /** Make a temporary copy of the current document (with unsaved edits) for printing or sharing. */
     fun prepareCopy(onReady:(File,String,Int)->Unit) {
