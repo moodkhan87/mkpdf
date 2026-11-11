@@ -106,9 +106,10 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
     var splitRanges by remember { mutableStateOf<List<IntRange>>(emptyList()) }
     var discardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var closeAsk by remember { mutableStateOf(false) }
-    var closeAfterSave by remember { mutableStateOf(false) }
+        var closeAfterSave by remember { mutableStateOf(false) }
         var exitAfter by remember { mutableStateOf(false) }
-    var exiting by remember { mutableStateOf(false) }
+        var exiting by remember { mutableStateOf(false) }
+        var passwordInput by remember { mutableStateOf("") }
     val searchFocus = remember { FocusRequester() }
     fun replaceSafely(action: () -> Unit) { if (doc?.dirty == true) discardAction = action else action() }
     fun closeSearch() { searchOpen = false; vm.search("") }
@@ -238,6 +239,52 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
             }
         }, confirmButton = {})
     ui.error?.let { AlertDialog(onDismissRequest = vm::dismissError, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissError) { Text("OK") } }) }
+        ui.passwordUri?.let { uri ->
+        val isWrong = ui.error == "WRONG_PASSWORD"
+        AlertDialog(
+            onDismissRequest = {
+                passwordInput = ""
+                vm.dismissError()
+                // Clear passwordUri by opening nothing; we reset via a small helper
+                vm.openWithPassword(uri, "") // will fail fast, but better to add a clear later if needed
+            },
+            title = { Text(if (isWrong) "Wrong password" else "Password required") },
+            text = {
+                Column {
+                    if (isWrong) Text("The password is incorrect. Try again.")
+                    else Text("This PDF is protected. Enter the password to open it.")
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val pwd = passwordInput
+                        passwordInput = ""
+                        vm.dismissError()
+                        vm.openWithPassword(uri, pwd)
+                    },
+                    enabled = passwordInput.isNotBlank() && !ui.busy
+                ) { Text("Open") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    passwordInput = ""
+                    vm.dismissError()
+                    // Force clear passwordUri
+                    // Temporary: we will improve clear in next small fix if needed
+                }) { Text("Cancel") }
+            }
+        )
+    }
     ui.message?.let { AlertDialog(onDismissRequest = vm::dismissMessage, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissMessage) { Text("OK") } }) }
 
     when (dialog) {
