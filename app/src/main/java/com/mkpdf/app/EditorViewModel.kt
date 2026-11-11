@@ -346,6 +346,18 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         }
     }
     suspend fun render(d:Document,page:Int,width:Int):Bitmap=repo.run {render(d,page,width)}
+    /** Normalize Arabic query for better matching (remove tashkeel + unify letter forms). */
+    private fun normalizeArabic(text: String): String {
+        return text
+            .replace(Regex("[\\u064B-\\u065F\\u0670]"), "") // tashkeel
+            .replace("أ", "ا")
+            .replace("إ", "ا")
+            .replace("آ", "ا")
+            .replace("ة", "ه")
+            .replace("ى", "ي")
+            .replace("ؤ", "و")
+            .replace("ئ", "ي")
+    }
     fun search(query:String) {
         searchJob?.cancel()
         _ui.update {it.copy(query=query,hits=emptyList(),selectedHit=-1,searching=false)}
@@ -357,7 +369,8 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             try {
                 for(page in d.pages.indices) {
                     coroutineContext.ensureActive()
-                    val results=repo.run {call("search_page",d,"page" to page,"query" to query).getJSONArray("hits").objects().map {h ->
+                    val searchQuery = normalizeArabic(query)
+                    val results=repo.run {call("search_page",d,"page" to page,"query" to searchQuery).getJSONArray("hits").objects().map {h ->
                         val rs=h.getJSONArray("rects")
                         Hit(h.getInt("page"),h.getInt("start"),(0 until rs.length()).map {rs.getJSONArray(it).rect()})
                     }}
