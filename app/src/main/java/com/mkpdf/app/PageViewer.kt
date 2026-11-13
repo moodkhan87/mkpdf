@@ -317,9 +317,9 @@ private fun PdfPageItem(
     Box(
         Modifier.size(with(density) { widthPx.toDp() }, with(density) { heightPx.toDp() })
             .background(Color.White)
-            .pointerInput(doc.handle, doc.generation, index, fields) {
+            .pointerInput(doc.handle, doc.generation, index, fields, links) {
                 // Nearest field within a finger-sized margin around each field (small fields are hard to hit exactly).
-                  fun fieldAt(pos: Offset): Pair<FormField, Widget>? {
+                fun fieldAt(pos: Offset): Pair<FormField, Widget>? {
                     val sx = size.width / page.width
                     val sy = size.height / page.height
                     val x = pos.x / sx
@@ -350,14 +350,38 @@ private fun PdfPageItem(
                         else -> { commit(); onField(f) }
                     }
                 }
+                fun linkAt(pos: Offset): PdfLink? {
+                    val sx = size.width / page.width
+                    val sy = size.height / page.height
+                    val x = pos.x / sx
+                    val y = pos.y / sy
+                    val mx = 14.dp.toPx() / sx
+                    val my = 14.dp.toPx() / sy
+                    var best: PdfLink? = null
+                    var bestDist = Float.MAX_VALUE
+                    for (l in links) {
+                        if (l.page != index) continue
+                        val dx = maxOf(l.rect.left - x, 0f, x - l.rect.right) / mx
+                        val dy = maxOf(l.rect.top - y, 0f, y - l.rect.bottom) / my
+                        if (dx > 1f || dy > 1f) continue
+                        val d = dx * dx + dy * dy
+                        if (d < bestDist) { bestDist = d; best = l }
+                    }
+                    return best
+                }
                 detectTapGestures(
                     // Act as soon as the finger lifts instead of waiting to see whether it is a double tap.
                     onPress = { pos ->
+                        val link = linkAt(pos)
+                        if (link != null && tryAwaitRelease()) {
+                            vm.onLinkTapped(link)
+                            return@onPress
+                        }
                         val h = fieldAt(pos)
                         if (h != null && tryAwaitRelease()) openField(h)
                     },
-                    onDoubleTap = { pos -> if (fieldAt(pos) == null) onToggleZoom() },
-                    onTap = { pos -> if (fieldAt(pos) == null) commit() }
+                    onDoubleTap = { pos -> if (fieldAt(pos) == null && linkAt(pos) == null) onToggleZoom() },
+                    onTap = { pos -> if (fieldAt(pos) == null && linkAt(pos) == null) commit() }
                 )
             },
         contentAlignment = Alignment.Center
