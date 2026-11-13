@@ -52,6 +52,19 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) { /* A document without readable form fields still opens normally. */ }
+        // Load links for the current document (all pages).
+        try {
+            val allLinks = mutableListOf<PdfLink>()
+            for (page in d.pages.indices) {
+                val pageLinks = repo.run { call("links", d, "page" to page).pdfLinks() }
+                allLinks += pageLinks
+            }
+            _ui.update { s ->
+                val cur = s.doc
+                if (cur != null && cur.handle == d.handle && cur.generation == d.generation) s.copy(links = allLinks) else s
+            }
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { /* Documents without links still open normally. */ }
         search(_ui.value.query)
     }
     private suspend fun replace(value:JSONObject,unsaved:Boolean=false) {
