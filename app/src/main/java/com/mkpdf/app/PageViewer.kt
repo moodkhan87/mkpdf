@@ -373,12 +373,12 @@ private fun PdfPageItem(
                     // Act as soon as the finger lifts instead of waiting to see whether it is a double tap.
                     onPress = { pos ->
                         val link = linkAt(pos)
-                        if (link != null && tryAwaitRelease()) {
-                            vm.onLinkTapped(link)
-                            return@onPress
+                        if (link != null) {
+                            if (tryAwaitRelease()) vm.onLinkTapped(link)
+                        } else {
+                            val h = fieldAt(pos)
+                            if (h != null && tryAwaitRelease()) openField(h)
                         }
-                        val h = fieldAt(pos)
-                        if (h != null && tryAwaitRelease()) openField(h)
                     },
                     onDoubleTap = { pos -> if (fieldAt(pos) == null && linkAt(pos) == null) onToggleZoom() },
                     onTap = { pos -> if (fieldAt(pos) == null && linkAt(pos) == null) commit() }
