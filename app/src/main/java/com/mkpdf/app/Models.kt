@@ -38,3 +38,15 @@ fun JSONObject.formFields() = getJSONArray("fields").objects().map { f ->
             Widget(it.getInt("page"),it.getJSONArray("rect").rect(),it.getBoolean("hidden"))
         })
 }
+fun JSONObject.pdfLinks() = getJSONArray("links").objects().map { l ->
+    PdfLink(
+        l.getInt("page"),
+        l.getJSONArray("rect").rect(),
+        l.getString("kind"),
+        when (val t = l.get("target")) {
+            is String -> t
+            is Number -> t.toString()
+            else -> t.toString()
+        }
+    )
+}
