@@ -211,7 +211,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(count = doc.pages.size, key = { "${doc.handle}:$it" }) { index ->
-                        PdfPageItem(doc, index, pageW, renderW, ui.hits, active, ui.fields, vm, onField) {
+                        PdfPageItem(doc, index, pageW, renderW, ui.hits, active, ui.fields, ui.links, vm, onField) {
                             zoomBy(if (zoom > 1.1f) 1f else 2f, vw / 2f, vh / 2f)
                         }
                     }
@@ -271,7 +271,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
 @Composable
 private fun PdfPageItem(
     doc: Document, index: Int, widthPx: Float, renderWidthPx: Float, hits: List<Hit>, active: Hit?, fields: List<FormField>,
-    vm: EditorViewModel, onField: (FormField) -> Unit, onToggleZoom: () -> Unit
+    links: List<PdfLink>, vm: EditorViewModel, onField: (FormField) -> Unit, onToggleZoom: () -> Unit
 ) {
     val page = doc.pages[index]
     val density = LocalDensity.current
