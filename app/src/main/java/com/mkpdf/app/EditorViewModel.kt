@@ -230,7 +230,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             repo.run {call("close",d);clearCache();saf.recovery.delete()}
             sourceUri=null
             _ui.update {it.copy(doc=null,query="",hits=emptyList(),selectedHit=-1,searching=false,
-                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null)}
+                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null,links=emptyList())}
         }
     }
     /** Open a PDF that another app handed to MKpdf (WhatsApp, email, downloads). Save always asks for a new file. */
@@ -273,6 +273,18 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
 
     fun clearPasswordPrompt() {
         _ui.update { it.copy(passwordUri = null, error = null) }
+    }
+    /** Called when the user taps a link. Internal links jump immediately; external ones are exposed for confirmation. */
+    fun onLinkTapped(link: PdfLink) {
+        if (link.kind == "page") {
+            // Internal link: jump to the target page (0-based).
+            val targetPage = link.target.toIntOrNull() ?: return
+            // The UI will scroll via selectedHit or we can expose a separate event; for now we use a simple message + the UI listens.
+            _ui.update { it.copy(message = "GoToPage:$targetPage") }
+        } else {
+            // External: show the full target for confirmation in the UI.
+            _ui.update { it.copy(message = "OpenLink:${link.target}") }
+        }
     }
     /** Make a temporary copy of the current document (with unsaved edits) for printing or sharing. */
     fun prepareCopy(onReady:(File,String,Int)->Unit) {
