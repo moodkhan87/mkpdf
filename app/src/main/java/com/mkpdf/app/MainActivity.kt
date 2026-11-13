@@ -110,6 +110,7 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
         var exitAfter by remember { mutableStateOf(false) }
         var exiting by remember { mutableStateOf(false) }
         var passwordInput by remember { mutableStateOf("") }
+    var pendingLink by remember { mutableStateOf<String?>(null) }
     val searchFocus = remember { FocusRequester() }
     fun replaceSafely(action: () -> Unit) { if (doc?.dirty == true) discardAction = action else action() }
     fun closeSearch() { searchOpen = false; vm.search("") }
@@ -280,8 +281,28 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
             }
         )
     }
-    ui.message?.let { AlertDialog(onDismissRequest = vm::dismissMessage, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissMessage) { Text("OK") } }) }
-
+    // Handle special link messages before the normal message dialog.
+    LaunchedEffect(ui.message) {
+        val msg = ui.message ?: return@LaunchedEffect
+        when {
+            msg.startsWith("GoToPage:") -> {
+                val page = msg.removePrefix("GoToPage:").toIntOrNull()
+                if (page != null) {
+                    listState.animateScrollToItem(page.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+                }
+                vm.dismissMessage()
+            }
+            msg.startsWith("OpenLink:") -> {
+                pendingLink = msg.removePrefix("OpenLink:")
+                vm.dismissMessage()
+            }
+        }
+    }
+    ui.message?.let { msg ->
+        if (!msg.startsWith("GoToPage:") && !msg.startsWith("OpenLink:")) {
+            AlertDialog(onDismissRequest = vm::dismissMessage, title = { Text("MKpdf") }, text = { Text(msg) }, confirmButton = { TextButton(onClick = vm::dismissMessage) { Text("OK") } })
+        }
+    }
     when (dialog) {
         "blank" -> PageInsertDialog("Add Blank Page", pageCount, page + 1, "Add", { dialog = "" }) { after, no ->
             dialog = ""; vm.edit("insert_blank", "at" to if (after) no else no - 1)
@@ -332,5 +353,38 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
             val fields = ui.fields.sortedBy { if (it.name == selectedField) 0 else 1 }
             fields.forEach { f -> key(f.name) { FieldEditor(f, ui.busy) { vm.setField(f.name, it) } } }
         }
+    }
+    pendingLink?.let { url ->
+        val allowed = url.startsWith("http://") || url.startsWith("https://") ||
+                url.startsWith("mailto:") || url.startsWith("tel:")
+        AlertDialog(
+            onDismissRequest = { pendingLink = null },
+            title = { Text("Open link?") },
+            text = {
+                Column {
+                    Text("You are about to open:")
+                    Spacer(Modifier.height(8.dp))
+                    Text(url, style = MaterialTheme.typography.bodyMedium)
+                    if (!allowed) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("This link type is not supported.", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                if (allowed) {
+                    TextButton(onClick = {
+                        try {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                            context.startActivity(intent)
+                        } catch (_: Exception) { }
+                        pendingLink = null
+                    }) { Text("Open") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingLink = null }) { Text("Cancel") }
+            }
+        )
     }
 }
