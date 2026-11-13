@@ -290,6 +290,29 @@ impl State {
                     json!({"index":i,"text":l.text,"rect":l.rect,"editable":l.decodable,"size":l.size,"font":l.base_font})).collect::<Vec<_>>() }),
                 );
             }
+            "links" => {
+                let page = integer(&v, "page")?;
+                let d = self.doc(id)?;
+                let links = d.links().iter().filter(|l| l.page == page).filter_map(|l| {
+                    let (kind, target) = match &l.action {
+                        pdfcraft_annot::links::LinkAction::Page(p) => ("page", json!(*p)),
+                        pdfcraft_annot::links::LinkAction::Uri(u) => ("uri", json!(u)),
+                        pdfcraft_annot::links::LinkAction::Other(_) => return None,
+                    };
+                    let rect = d.info.pages.get(page).map(|p| {
+                        let a = p.user_to_view(l.rect[0] as f32, l.rect[1] as f32);
+                        let b = p.user_to_view(l.rect[2] as f32, l.rect[3] as f32);
+                        [a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1])]
+                    })?;
+                    Some(json!({
+                        "page": page,
+                        "rect": rect,
+                        "kind": kind,
+                        "target": target
+                    }))
+                }).collect::<Vec<_>>();
+                return Ok(json!({"links": links}));
+            }
             "fields" => {
                 let d = self.doc(id)?;
                 let fields = d.form.iter().map(|f| {
