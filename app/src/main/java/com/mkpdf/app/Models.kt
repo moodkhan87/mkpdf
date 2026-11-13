@@ -8,6 +8,7 @@ data class Document(val handle: Long, val name: String, val generation: Long, va
     val undo: Boolean, val redo: Boolean, val pages: List<Page>, val notices: List<String>)
 data class PdfRect(val left: Float, val top: Float, val right: Float, val bottom: Float)
 data class Hit(val page: Int, val start: Int, val rects: List<PdfRect>)
+data class PdfLink(val page: Int, val rect: PdfRect, val kind: String, val target: String)
 data class TextLine(val index: Int, val text: String, val editable: Boolean)
 data class Option(val value: String, val label: String)
 data class Widget(val page: Int, val rect: PdfRect, val hidden: Boolean)
@@ -17,7 +18,7 @@ data class UiState(val doc: Document? = null, val busy: Boolean = false, val err
     val message: String? = null, val query: String = "", val hits: List<Hit> = emptyList(),
     val searching: Boolean = false, val selectedHit: Int = -1, val fields: List<FormField> = emptyList(),
     val lines: List<TextLine> = emptyList(), val recoveryAvailable: Boolean = false,
-    val passwordUri: Uri? = null)
+    val passwordUri: Uri? = null, val links: List<PdfLink> = emptyList())
 fun obj(vararg values: Pair<String, Any?>) = JSONObject().apply {
     values.forEach { (k,v) -> put(k, when(v) { null -> JSONObject.NULL; is List<*> -> JSONArray(v); else -> v }) }
 }
