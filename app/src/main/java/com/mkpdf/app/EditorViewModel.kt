@@ -298,6 +298,22 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             _ui.update { it.copy(selection = sel) }
         }
     }
+        fun selectRange(page: Int, start: Int, end: Int) {
+        val d = _ui.value.doc ?: return
+        if (end <= start) {
+            clearSelection()
+            return
+        }
+        perform {
+            val result = repo.run {
+                call("select_range", d, "page" to page, "start" to start, "end" to end)
+            }
+            val sel = if (result.getInt("end") > result.getInt("start")) {
+                result.textSelection(page)
+            } else null
+            _ui.update { it.copy(selection = sel) }
+        }
+    }
 
     fun clearSelection() {
         _ui.update { it.copy(selection = null) }
