@@ -333,6 +333,22 @@ impl State {
                     "rects": text.line_rects(range)
                 }));
             }
+                        "select_range" => {
+                let page = integer(&v, "page")?;
+                let start = integer(&v, "start")?;
+                let end = integer(&v, "end")?;
+                if end <= start {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                }
+                let text = self.page_text(id, page)?;
+                let range = start..end;
+                return Ok(json!({
+                    "start": start,
+                    "end": end,
+                    "text": text.text_of(range.clone()),
+                    "rects": text.line_rects(range)
+                }));
+            }
             "fields" => {
                 let d = self.doc(id)?;
                 let fields = d.form.iter().map(|f| {
