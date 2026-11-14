@@ -477,6 +477,58 @@ private fun PdfPageItem(
                 }
             }
         }
+        // Selection drag handles (phase 2) with basic drag.
+        selection?.takeIf { it.page == index && it.rects.isNotEmpty() }?.let { sel ->
+            val sx = widthPx / page.width
+            val sy = heightPx / page.height
+            val first = sel.rects.first()
+            val last = sel.rects.last()
+            val handleRadius = with(density) { 14.dp.toPx() }
+
+            val startX = first.left * sx
+            val startY = first.top * sy
+            val endX = last.right * sx
+            val endY = last.bottom * sy
+
+            // Draw handles
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(Color(0xFF3A86FF), radius = handleRadius, center = Offset(startX, startY))
+                drawCircle(Color.White, radius = handleRadius / 2, center = Offset(startX, startY))
+                drawCircle(Color(0xFF3A86FF), radius = handleRadius, center = Offset(endX, endY))
+                drawCircle(Color.White, radius = handleRadius / 2, center = Offset(endX, endY))
+            }
+
+            // Drag start handle
+            Box(
+                Modifier
+                    .offset { IntOffset((startX - handleRadius).roundToInt(), (startY - handleRadius).roundToInt()) }
+                    .size(with(density) { (handleRadius * 2).toDp() })
+                    .pointerInput(sel.start, sel.end) {
+                        detectVerticalDragGestures { change, _ ->
+                            change.consume()
+                            val newY = (change.position.y + startY) / sy
+                            val newX = startX / sx
+                            // For simplicity in this version we only adjust by calling selectAt near the new position
+                            vm.selectAt(index, newX, newY)
+                        }
+                    }
+            )
+
+            // Drag end handle
+            Box(
+                Modifier
+                    .offset { IntOffset((endX - handleRadius).roundToInt(), (endY - handleRadius).roundToInt()) }
+                    .size(with(density) { (handleRadius * 2).toDp() })
+                    .pointerInput(sel.start, sel.end) {
+                        detectVerticalDragGestures { change, _ ->
+                            change.consume()
+                            val newY = (change.position.y + endY) / sy
+                            val newX = endX / sx
+                            vm.selectAt(index, newX, newY)
+                        }
+                    }
+            )
+        }
         if (shown == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
     }
 }
