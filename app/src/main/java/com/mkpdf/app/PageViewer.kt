@@ -454,6 +454,29 @@ private fun PdfPageItem(
                 )
             }
         }
+        // Floating Copy bar for the current selection (phase 1).
+        selection?.takeIf { it.page == index && it.rects.isNotEmpty() }?.let { sel ->
+            val sx = widthPx / page.width
+            val sy = heightPx / page.height
+            val first = sel.rects.first()
+            val left = (first.left * sx).roundToInt()
+            val top = (first.top * sy).roundToInt() - with(density) { 48.dp.roundToPx() }
+            Surface(
+                color = Color(0xE6303134),
+                shape = RoundedCornerShape(20.dp),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset { IntOffset(left.coerceAtLeast(0), top.coerceAtLeast(0)) }
+            ) {
+                TextButton(
+                    onClick = { vm.copySelection() },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                ) {
+                    Text("Copy")
+                }
+            }
+        }
         if (shown == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
     }
 }
