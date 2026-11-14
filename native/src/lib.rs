@@ -313,6 +313,26 @@ impl State {
                 }).collect::<Vec<_>>();
                 return Ok(json!({"links": links}));
             }
+            "select_at" => {
+                let page = integer(&v, "page")?;
+                let x = number(&v, "x")? as f32;
+                let y = number(&v, "y")? as f32;
+                let text = self.page_text(id, page)?;
+                let Some(glyph) = text.nearest(x, y) else {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                };
+                let Some((a, b)) = text.word_at(glyph) else {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                };
+                let end = b + 1;
+                let range = a..end;
+                return Ok(json!({
+                    "start": a,
+                    "end": end,
+                    "text": text.text_of(range.clone()),
+                    "rects": text.line_rects(range)
+                }));
+            }
             "fields" => {
                 let d = self.doc(id)?;
                 let fields = d.form.iter().map(|f| {
