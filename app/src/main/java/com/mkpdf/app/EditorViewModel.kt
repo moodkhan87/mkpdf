@@ -230,7 +230,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             repo.run {call("close",d);clearCache();saf.recovery.delete()}
             sourceUri=null
             _ui.update {it.copy(doc=null,query="",hits=emptyList(),selectedHit=-1,searching=false,
-                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null,links=emptyList())}
+                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null,links=emptyList(),selection=null)}
         }
     }
     /** Open a PDF that another app handed to MKpdf (WhatsApp, email, downloads). Save always asks for a new file. */
@@ -285,6 +285,29 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             // External: show the full target for confirmation in the UI.
             _ui.update { it.copy(message = "OpenLink:${link.target}") }
         }
+    }
+    fun selectAt(page: Int, x: Float, y: Float) {
+        val d = _ui.value.doc ?: return
+        perform {
+            val result = repo.run {
+                call("select_at", d, "page" to page, "x" to x.toDouble(), "y" to y.toDouble())
+            }
+            val sel = if (result.getInt("end") > result.getInt("start")) {
+                result.textSelection(page)
+            } else null
+            _ui.update { it.copy(selection = sel) }
+        }
+    }
+
+    fun clearSelection() {
+        _ui.update { it.copy(selection = null) }
+    }
+
+    fun copySelection() {
+        val text = _ui.value.selection?.text ?: return
+        val clipboard = getApplication<Application>().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("MKpdf", text))
+        _ui.update { it.copy(message = "Copied", selection = null) }
     }
     /** Make a temporary copy of the current document (with unsaved edits) for printing or sharing. */
     fun prepareCopy(onReady:(File,String,Int)->Unit) {
