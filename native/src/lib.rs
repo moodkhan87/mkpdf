@@ -318,10 +318,18 @@ impl State {
                 let x = number(&v, "x")? as f32;
                 let y = number(&v, "y")? as f32;
                 let text = self.page_text(id, page)?;
-                let Some(glyph) = text.nearest(x, y) else {
+                let Some(glyph_idx) = text.nearest(x, y) else {
                     return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
                 };
-                let Some((a, b)) = text.word_at(glyph) else {
+                let glyph = &text.glyphs[glyph_idx];
+                // Only accept if the point is reasonably close to the glyph (inside or near its rect).
+                let pad = 8.0; // points
+                let r = glyph.rect;
+                let inside = x >= r[0] - pad && x <= r[2] + pad && y >= r[1] - pad && y <= r[3] + pad;
+                if !inside {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                }
+                let Some((a, b)) = text.word_at(glyph_idx) else {
                     return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
                 };
                 let end = b + 1;
