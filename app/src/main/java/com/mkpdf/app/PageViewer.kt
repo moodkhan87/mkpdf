@@ -317,7 +317,7 @@ private fun PdfPageItem(
     Box(
         Modifier.size(with(density) { widthPx.toDp() }, with(density) { heightPx.toDp() })
             .background(Color.White)
-            .pointerInput(doc.handle, doc.generation, index, fields, links) {
+            .pointerInput(doc.handle, doc.generation, index, fields, links, selection) {
                 // Nearest field within a finger-sized margin around each field (small fields are hard to hit exactly).
                 fun fieldAt(pos: Offset): Pair<FormField, Widget>? {
                     val sx = size.width / page.width
@@ -370,7 +370,14 @@ private fun PdfPageItem(
                     return best
                 }
                 detectTapGestures(
-                    // Act as soon as the finger lifts instead of waiting to see whether it is a double tap.
+                    onLongPress = { pos ->
+                        // Convert screen position to page coordinates (same space as engine).
+                        val sx = size.width / page.width
+                        val sy = size.height / page.height
+                        val x = pos.x / sx
+                        val y = pos.y / sy
+                        vm.selectAt(index, x, y)
+                    },
                     onPress = { pos ->
                         val link = linkAt(pos)
                         if (link != null) {
@@ -380,8 +387,15 @@ private fun PdfPageItem(
                             if (h != null && tryAwaitRelease()) openField(h)
                         }
                     },
-                    onDoubleTap = { pos -> if (fieldAt(pos) == null && linkAt(pos) == null) onToggleZoom() },
-                    onTap = { pos -> if (fieldAt(pos) == null && linkAt(pos) == null) commit() }
+                    onDoubleTap = { pos ->
+                        if (fieldAt(pos) == null && linkAt(pos) == null) onToggleZoom()
+                    },
+                    onTap = { pos ->
+                        if (fieldAt(pos) == null && linkAt(pos) == null) {
+                            commit()
+                            if (selection != null) vm.clearSelection()
+                        }
+                    }
                 )
             },
         contentAlignment = Alignment.Center
@@ -408,6 +422,7 @@ private fun PdfPageItem(
                 h.rects.forEach { paint(it, if (h == active) Color(0x88FF8800) else Color(0x66FFE500)) }
             }
             fields.filter { !it.readOnly }.flatMap { it.widgets }.filter { it.page == index && !it.hidden }.forEach { paint(it.rect, Color(0x18008877)) }
+            selection?.takeIf { it.page == index }?.rects?.forEach { paint(it, Color(0x553A86FF)) }
         }
         editing?.let { (f, w) ->
             val sx = widthPx / page.width
