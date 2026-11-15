@@ -314,6 +314,21 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             _ui.update { it.copy(selection = sel) }
         }
     }
+        /** Live selection extension while a handle is dragged. Read-only: bypasses the busy gate. */
+    suspend fun extendSelection(page: Int, anchor: Int, x: Float, y: Float) {
+        val d = _ui.value.doc ?: return
+        try {
+            val result = repo.run {
+                call("select_to", d, "page" to page, "anchor" to anchor,
+                    "x" to x.toDouble(), "y" to y.toDouble())
+            }
+            val cur = _ui.value.doc
+            if (cur == null || cur.handle != d.handle || cur.generation != d.generation) return
+            val sel = if (result.getInt("end") > result.getInt("start")) result.textSelection(page) else null
+            _ui.update { it.copy(selection = sel) }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { /* keep the previous selection if the engine hiccups mid-drag */ }
+    }
 
     fun clearSelection() {
         _ui.update { it.copy(selection = null) }
