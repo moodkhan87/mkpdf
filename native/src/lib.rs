@@ -357,6 +357,30 @@ impl State {
                     "rects": text.line_rects(range)
                 }));
             }
+            "select_to" => {
+                let page = integer(&v, "page")?;
+                let anchor = integer(&v, "anchor")?;
+                let x = number(&v, "x")? as f32;
+                let y = number(&v, "y")? as f32;
+                let text = self.page_text(id, page)?;
+                let n = text.glyphs.len();
+                if n == 0 {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                }
+                let Some(idx) = text.nearest(x, y) else {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                };
+                let anchor = anchor.min(n - 1);
+                let a = anchor.min(idx);
+                let b = anchor.max(idx) + 1;
+                let range = a..b;
+                return Ok(json!({
+                    "start": a,
+                    "end": b,
+                    "text": text.text_of(range.clone()),
+                    "rects": text.line_rects(range)
+                }));
+            }
             "fields" => {
                 let d = self.doc(id)?;
                 let fields = d.form.iter().map(|f| {
