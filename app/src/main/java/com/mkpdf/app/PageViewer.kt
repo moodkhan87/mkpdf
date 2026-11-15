@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import androidx.compose.foundation.gestures.detectDragGestures
 
 private const val MIN_ZOOM = 0.5f
 private const val MAX_ZOOM = 4f
@@ -294,6 +295,14 @@ private fun PdfPageItem(
     var hadFocus by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    // Selection-handle drag state (0 = none, 1 = start handle, 2 = end handle).
+    var dragSide by remember(doc.handle, index) { mutableIntStateOf(0) }
+    var dragAnchor by remember(doc.handle, index) { mutableIntStateOf(0) }
+    var dragOx by remember(doc.handle, index) { mutableFloatStateOf(0f) }
+    var dragOy by remember(doc.handle, index) { mutableFloatStateOf(0f) }
+    var dragX by remember(doc.handle, index) { mutableFloatStateOf(0f) }
+    var dragY by remember(doc.handle, index) { mutableFloatStateOf(0f) }
+    val dragScope = rememberCoroutineScope()
     fun commit() {
         hadFocus = false
         val e = editing ?: return
@@ -455,7 +464,7 @@ private fun PdfPageItem(
             }
         }
         // Floating Copy bar for the current selection (phase 1).
-        selection?.takeIf { it.page == index && it.rects.isNotEmpty() }?.let { sel ->
+        selection?.takeIf { it.page == index && it.rects.isNotEmpty() && dragSide == 0 }?.let { sel ->
             val sx = widthPx / page.width
             val sy = heightPx / page.height
             val first = sel.rects.first()
@@ -477,32 +486,107 @@ private fun PdfPageItem(
                 }
             }
         }
-        // Selection handles — Google-Drive style (visual only; interactive dragging is phase 2 via select_range).
+        // Selection handles — Google-Drive style with interactive dragging.
         selection?.takeIf { it.page == index && it.rects.isNotEmpty() }?.let { sel ->
-          val sx = widthPx / page.width
-          val sy = heightPx / page.height
-          val first = sel.rects.first()
-          val last = sel.rects.last()
-          val r = with(density) { 11.dp.toPx() }
-          val gapY = with(density) { 2.dp.toPx() }
-          val handleColor = Color(0xFF3A86FF)
+            val sx = widthPx / page.width
+            val sy = heightPx / page.height
+            val first = sel.rects.first()
+            val last = sel.rects.last()
+            val r = with(density) { 11.dp.toPx() }
+            val gapY = with(density) { 2.dp.toPx() }
+            val touch = with(density) { 40.dp.toPx() }
+            val handleColor = Color(0xFF3A86FF)
 
-          // Both handles hang BELOW the text line, like Google Drive:
-          // start handle: squared corner at top-right, touching the selection start.
-          // end handle: squared corner at top-left, touching the selection end.
-          val startCx = (first.left * sx - r).coerceAtLeast(r)
-          val startCy = first.bottom * sy + gapY + r
-          val endCx = (last.right * sx + r).coerceAtMost(widthPx - r)
-          val endCy = last.bottom * sy + gapY + r
+            // Both handles hang below the text line; squared corner faces the text.
+            val startCx = (first.left * sx - r).coerceAtLeast(r)
+            val startCy = first.bottom * sy + gapY + r
+            val endCx = (last.right * sx + r).coerceAtMost(widthPx - r)
+            val endCy = last.bottom * sy + gapY + r
 
-          Canvas(Modifier.fillMaxSize()) {
-              // Start handle: circle + filled top-right quadrant (teardrop pointing to text start).
-              drawCircle(handleColor, radius = r, center = Offset(startCx, startCy))
-              drawRect(handleColor, topLeft = Offset(startCx, startCy - r), size = Size(r, r))
-              // End handle: circle + filled top-left quadrant (teardrop pointing to text end).
-              drawCircle(handleColor, radius = r, center = Offset(endCx, endCy))
-              drawRect(handleColor, topLeft = Offset(endCx - r, endCy - r), size = Size(r, r))
-          }
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(handleColor, radius = r, center = Offset(startCx, startCy))
+                drawRect(handleColor, topLeft = Offset(startCx, startCy - r), size = Size(r, r))
+                drawCircle(handleColor, radius = r, center = Offset(endCx, endCy))
+                drawRect(handleColor, topLeft = Offset(endCx - r, endCy - r), size = Size(r, r))
+            }
+
+            // Latest values readable inside long-lived gesture lambdas (no stale captures).
+            val latestSel by rememberUpdatedState(sel)
+            val latestSx by rememberUpdatedState(sx)
+            val latestSy by rememberUpdatedState(sy)
+            val startOrigin by rememberUpdatedState(Offset(startCx - touch / 2, startCy - touch / 2))
+            val endOrigin by rememberUpdatedState(Offset(endCx - touch / 2, endCy - touch / 2))
+
+            // Throttled latest-wins updates: snapshotFlow conflates while the engine call runs.
+            LaunchedEffect(dragSide) {
+                if (dragSide == 0) return@LaunchedEffect
+                snapshotFlow { dragX to dragY }.collect { (x, y) ->
+                    vm.extendSelection(index, dragAnchor, x, y)
+                    delay(50)
+                }
+            }
+
+            // START handle: anchor = last glyph of the selection; finger moves the start.
+            val startBox = if (dragSide == 1) Offset(dragOx, dragOy) else startOrigin
+            Box(
+                Modifier
+                    .offset { IntOffset(startBox.x.roundToInt(), startBox.y.roundToInt()) }
+                    .size(with(density) { touch.toDp() })
+                    .pointerInput(doc.handle, doc.generation, index, "startHandle") {
+                        detectDragGestures(
+                            onDragStart = { off ->
+                                val o = startOrigin
+                                dragAnchor = (latestSel.end - 1).coerceAtLeast(0)
+                                dragOx = o.x; dragOy = o.y
+                                dragX = (o.x + off.x) / latestSx
+                                dragY = (o.y + off.y) / latestSy
+                                dragSide = 1
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                dragX = (dragOx + change.position.x) / latestSx
+                                dragY = (dragOy + change.position.y) / latestSy
+                            },
+                            onDragEnd = {
+                                val a = dragAnchor; val x = dragX; val y = dragY
+                                dragSide = 0
+                                dragScope.launch { vm.extendSelection(index, a, x, y) }
+                            },
+                            onDragCancel = { dragSide = 0 }
+                        )
+                    }
+            )
+
+            // END handle: anchor = first glyph of the selection; finger moves the end.
+            val endBox = if (dragSide == 2) Offset(dragOx, dragOy) else endOrigin
+            Box(
+                Modifier
+                    .offset { IntOffset(endBox.x.roundToInt(), endBox.y.roundToInt()) }
+                    .size(with(density) { touch.toDp() })
+                    .pointerInput(doc.handle, doc.generation, index, "endHandle") {
+                        detectDragGestures(
+                            onDragStart = { off ->
+                                val o = endOrigin
+                                dragAnchor = latestSel.start
+                                dragOx = o.x; dragOy = o.y
+                                dragX = (o.x + off.x) / latestSx
+                                dragY = (o.y + off.y) / latestSy
+                                dragSide = 2
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                dragX = (dragOx + change.position.x) / latestSx
+                                dragY = (dragOy + change.position.y) / latestSy
+                            },
+                            onDragEnd = {
+                                val a = dragAnchor; val x = dragX; val y = dragY
+                                dragSide = 0
+                                dragScope.launch { vm.extendSelection(index, a, x, y) }
+                            },
+                            onDragCancel = { dragSide = 0 }
+                        )
+                    }
+            )
         }
         if (shown == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
     }
