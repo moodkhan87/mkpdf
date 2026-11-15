@@ -477,57 +477,32 @@ private fun PdfPageItem(
                 }
             }
         }
-        // Selection drag handles (phase 2) with basic drag.
+        // Selection handles — Google-Drive style (visual only; interactive dragging is phase 2 via select_range).
         selection?.takeIf { it.page == index && it.rects.isNotEmpty() }?.let { sel ->
-            val sx = widthPx / page.width
-            val sy = heightPx / page.height
-            val first = sel.rects.first()
-            val last = sel.rects.last()
-            val handleRadius = with(density) { 14.dp.toPx() }
+          val sx = widthPx / page.width
+          val sy = heightPx / page.height
+          val first = sel.rects.first()
+          val last = sel.rects.last()
+          val r = with(density) { 11.dp.toPx() }
+          val gapY = with(density) { 2.dp.toPx() }
+          val handleColor = Color(0xFF3A86FF)
 
-            val startX = first.left * sx
-            val startY = first.top * sy
-            val endX = last.right * sx
-            val endY = last.bottom * sy
+          // Both handles hang BELOW the text line, like Google Drive:
+          // start handle: squared corner at top-right, touching the selection start.
+          // end handle: squared corner at top-left, touching the selection end.
+          val startCx = (first.left * sx - r).coerceAtLeast(r)
+          val startCy = first.bottom * sy + gapY + r
+          val endCx = (last.right * sx + r).coerceAtMost(widthPx - r)
+          val endCy = last.bottom * sy + gapY + r
 
-            // Draw handles
-            Canvas(Modifier.fillMaxSize()) {
-                drawCircle(Color(0xFF3A86FF), radius = handleRadius, center = Offset(startX, startY))
-                drawCircle(Color.White, radius = handleRadius / 2, center = Offset(startX, startY))
-                drawCircle(Color(0xFF3A86FF), radius = handleRadius, center = Offset(endX, endY))
-                drawCircle(Color.White, radius = handleRadius / 2, center = Offset(endX, endY))
-            }
-
-            // Drag start handle
-            Box(
-                Modifier
-                    .offset { IntOffset((startX - handleRadius).roundToInt(), (startY - handleRadius).roundToInt()) }
-                    .size(with(density) { (handleRadius * 2).toDp() })
-                    .pointerInput(sel.start, sel.end) {
-                        detectVerticalDragGestures { change, _ ->
-                            change.consume()
-                            val newY = (change.position.y + startY) / sy
-                            val newX = startX / sx
-                            // For simplicity in this version we only adjust by calling selectAt near the new position
-                            vm.selectAt(index, newX, newY)
-                        }
-                    }
-            )
-
-            // Drag end handle
-            Box(
-                Modifier
-                    .offset { IntOffset((endX - handleRadius).roundToInt(), (endY - handleRadius).roundToInt()) }
-                    .size(with(density) { (handleRadius * 2).toDp() })
-                    .pointerInput(sel.start, sel.end) {
-                        detectVerticalDragGestures { change, _ ->
-                            change.consume()
-                            val newY = (change.position.y + endY) / sy
-                            val newX = endX / sx
-                            vm.selectAt(index, newX, newY)
-                        }
-                    }
-            )
+          Canvas(Modifier.fillMaxSize()) {
+              // Start handle: circle + filled top-right quadrant (teardrop pointing to text start).
+              drawCircle(handleColor, radius = r, center = Offset(startCx, startCy))
+              drawRect(handleColor, topLeft = Offset(startCx, startCy - r), size = Size(r, r))
+              // End handle: circle + filled top-left quadrant (teardrop pointing to text end).
+              drawCircle(handleColor, radius = r, center = Offset(endCx, endCy))
+              drawRect(handleColor, topLeft = Offset(endCx - r, endCy - r), size = Size(r, r))
+          }
         }
         if (shown == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
     }
