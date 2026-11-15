@@ -381,6 +381,21 @@ impl State {
                     "rects": text.line_rects(range)
                 }));
             }
+            "select_page" => {
+                let page = integer(&v, "page")?;
+                let text = self.page_text(id, page)?;
+                let n = text.glyphs.len();
+                if n == 0 {
+                    return Ok(json!({"start":0,"end":0,"text":"","rects":[]}));
+                }
+                let range = 0..n;
+                return Ok(json!({
+                    "start": 0,
+                    "end": n,
+                    "text": text.text_of(range.clone()),
+                    "rects": text.line_rects(range)
+                }));
+            }
             "fields" => {
                 let d = self.doc(id)?;
                 let fields = d.form.iter().map(|f| {
