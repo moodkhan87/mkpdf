@@ -436,7 +436,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         if(idx<0||items.size<2)return
         if(items.size>32){_ui.update {it.copy(error="Combine up to 32 files at once")};return}
         val before=items.subList(0,idx).filterNotNull()
-        val after=items.subList(idx+1).filterNotNull()
+        val after = items.subList(idx + 1, items.size).filterNotNull()
         searchJob?.cancel()
         perform {
             var cur=d0
