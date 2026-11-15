@@ -167,11 +167,14 @@ impl State {
         if page >= self.doc(id)?.info.pages.len() {
             return Err("No such page".into());
         }
-        let c = self.cache(id)?;
-        if let Some(t) = c.texts.get(&page) {
-            return Ok(t.clone());
+        // Fast path: already extracted for this generation.
+        {
+            let c = self.cache(id)?;
+            if let Some(t) = c.texts.get(&page) {
+                return Ok(t.clone());
+            }
         }
-        let r = c.renderer.render(RenderRequest {
+        let r = self.cache(id)?.renderer.render(RenderRequest {
             page,
             kind: RequestKind::Text,
             tile: None,
@@ -183,11 +186,64 @@ impl State {
             return Err(e);
         }
         let text = r.text.ok_or("Renderer returned no text layer")?;
-        if c.texts.len() >= 12 {
-            c.texts.clear();
+        let c = self.cache(id)?;
+        // Evict ONE arbitrary page instead of wiping the whole cache, so dragging a
+        // selection across many pages does not re-extract the same pages over and over.
+        if c.texts.len() >= 24 {
+            if let Some(victim) = c.texts.keys().next().copied() {
+                c.texts.remove(&victim);
+            }
         }
         c.texts.insert(page, text.clone());
         Ok(text)
+    }
+        /// One page's slice of a selection, or null when the page has no glyphs.
+    fn span_slice(&mut self, id: DocId, page: usize, start: usize, end: usize) -> R<Value> {
+        let text = self.page_text(id, page)?;
+        let n = text.glyphs.len();
+        if n == 0 || end <= start {
+            return Ok(Value::Null);
+        }
+        let a = start.min(n - 1);
+        let b = end.min(n);
+        if b <= a {
+            return Ok(Value::Null);
+        }
+        let range = a..b;
+        Ok(json!({
+            "page": page,
+            "start": a,
+            "end": b,
+            "text": text.text_of(range.clone()),
+            "rects": text.line_rects(range)
+        }))
+    }
+
+    /// Whole pages between the two ends are taken in full; the two end pages are sliced.
+    fn span_range(&mut self, id: DocId, p1: usize, g1: usize, p2: usize, g2: usize) -> R<Value> {
+        let count = self.doc(id)?.info.pages.len();
+        if count == 0 {
+            return Ok(json!({"pages": []}));
+        }
+        let forward = (p1, g1) <= (p2, g2);
+        let (sp, sg, ep, eg) = if forward { (p1, g1, p2, g2) } else { (p2, g2, p1, g1) };
+        let sp = sp.min(count - 1);
+        let ep = ep.min(count - 1);
+        // Cap the span so one drag can never lock the worker for a long time.
+        let ep = ep.min(sp + 199);
+        let mut out: Vec<Value> = Vec::new();
+        for p in sp..=ep {
+            let n = self.page_text(id, p)?.glyphs.len();
+            if n == 0 {
+                continue;
+            }
+            let a = if p == sp { sg.min(n - 1) } else { 0 };
+            let b = if p == ep { eg.min(n - 1) + 1 } else { n };
+            if let Some(v) = self.span_slice(id, p, a, b)?.as_object() {
+                out.push(Value::Object(v.clone()));
+            }
+        }
+        Ok(json!({"pages": out}))
     }
     fn open(&mut self, name: &str, bytes: Arc<Vec<u8>>, password: Option<&str>) -> R<DocId> {
         let id = self
@@ -395,6 +451,35 @@ impl State {
                     "text": text.text_of(range.clone()),
                     "rects": text.line_rects(range)
                 }));
+            }
+                        "glyph_at" => {
+                let page = integer(&v, "page")?;
+                let x = number(&v, "x")? as f32;
+                let y = number(&v, "y")? as f32;
+                let text = self.page_text(id, page)?;
+                let idx = text.nearest(x, y).map(|i| i as i64).unwrap_or(-1);
+                return Ok(json!({"index": idx}));
+            }
+            "select_span_to" => {
+                let ap = integer(&v, "anchor_page")?;
+                let ag = integer(&v, "anchor_glyph")?;
+                let fp = integer(&v, "page")?;
+                let x = number(&v, "x")? as f32;
+                let y = number(&v, "y")? as f32;
+                let text = self.page_text(id, fp)?;
+                let n = text.glyphs.len();
+                if n == 0 {
+                    return Ok(json!({"pages": []}));
+                }
+                let fg = text.nearest(x, y).unwrap_or(0).min(n - 1);
+                return self.span_range(id, ap, ag, fp, fg);
+            }
+            "select_span" => {
+                let sp = integer(&v, "start_page")?;
+                let sg = integer(&v, "start")?;
+                let ep = integer(&v, "end_page")?;
+                let eg = integer(&v, "end")?;
+                return self.span_range(id, sp, sg, ep, eg);
             }
             "fields" => {
                 let d = self.doc(id)?;
