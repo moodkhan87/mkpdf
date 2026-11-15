@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -58,15 +59,18 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
-import androidx.compose.foundation.gestures.detectDragGestures
 
 private const val MIN_ZOOM = 0.5f
 private const val MAX_ZOOM = 4f
+
+/** Where the dragging finger currently points, in viewport coordinates. */
+private data class SelectionDrag(val side: Int, val viewportY: Float, val page: Int, val x: Float, val y: Float)
 
 /**
  * Continuous vertical list of pages. Pinch zooms around the fingers (50% to 400%), one finger scrolls up/down
  * and, when zoomed in, also pans sideways. Page images are re-rendered only after the zoom has settled.
  * A scroll handle with a page bubble appears while touching and fades out afterwards.
+ * Dragging a selection handle near the top/bottom edge auto-scrolls and extends the selection across pages.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -87,6 +91,18 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     val active = ui.hits.getOrNull(ui.selectedHit)
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val scrolling = listState.isScrollInProgress
+
+    // ---- Cross-page selection drag: shared between all page items. ----
+    var selDrag by remember(doc.handle) { mutableStateOf<SelectionDrag?>(null) }
+    var selAnchorPage by remember(doc.handle) { mutableIntStateOf(0) }
+    var selAnchorGlyph by remember(doc.handle) { mutableIntStateOf(0) }
+    val latestList by rememberUpdatedState(listState)
+    val latestVm by rememberUpdatedState(vm)
+    val latestViewport by rememberUpdatedState(viewport)
+    val latestZoom by rememberUpdatedState(zoom)
+    val latestPan by rememberUpdatedState(panX)
+    val latestGap by rememberUpdatedState(gap)
+    val latestDoc by rememberUpdatedState(doc)
 
     // Re-render the page images only after the pinch has settled.
     LaunchedEffect(zoom) { delay(250); renderZoom = zoom }
@@ -160,6 +176,43 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
         }
     }
 
+    // While a handle is held near an edge: scroll the list and keep extending the selection.
+    LaunchedEffect(selDrag != null) {
+        if (selDrag == null) return@LaunchedEffect
+        val edge = with(density) { 72.dp.toPx() }
+        while (true) {
+            val d = selDrag
+            if (d == null) break
+            val vh = latestViewport.height.toFloat()
+            val speed = when {
+                vh <= 0f -> 0f
+                d.viewportY < edge -> -((edge - d.viewportY) / edge) * 26f
+                d.viewportY > vh - edge -> ((d.viewportY - (vh - edge)) / edge) * 26f
+                else -> 0f
+            }
+            if (speed != 0f) latestList.dispatchRawDelta(-speed)
+            // Resolve the finger against the CURRENT layout, so it follows the page under it while scrolling.
+            val ls = latestList
+            val z = latestZoom
+            val vw = latestViewport.width.toFloat()
+            val contentLeft = if (z <= 1f) (vw - vw * z) / 2f else clampPan(latestPan, z)
+            val pageWidth = (vw * z - 2 * latestGap).coerceAtLeast(1f)
+            val topOffset = -ls.layoutInfo.viewportStartOffset
+            val hit = ls.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                info.index < latestDoc.pages.size && info.size > 0 &&
+                    d.viewportY >= info.offset + topOffset && d.viewportY < info.offset + topOffset + info.size
+            }
+            if (hit != null) {
+                val p = latestDoc.pages[hit.index]
+                val sy = hit.size / p.height
+                val px = ((d.x - contentLeft - latestGap) / (pageWidth / p.width)).coerceIn(0f, p.width)
+                val py = ((d.viewportY - (hit.offset + topOffset)) / sy).coerceIn(0f, p.height)
+                latestVm.extendSelection(selAnchorPage, selAnchorGlyph, hit.index, px, py)
+            }
+            delay(40)
+        }
+    }
+
     Box(
         Modifier.fillMaxSize()
             .background(if (dark) Color(0xFF2B2F2E) else Color(0xFFE3E8E6))
@@ -212,9 +265,22 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(count = doc.pages.size, key = { "${doc.handle}:$it" }) { index ->
-                        PdfPageItem(doc, index, pageW, renderW, ui.hits, active, ui.fields, ui.links, ui.selection, vm, onField) {
-                            zoomBy(if (zoom > 1.1f) 1f else 2f, vw / 2f, vh / 2f)
-                        }
+                        PdfPageItem(
+                            doc, index, pageW, renderW, ui.hits, active, ui.fields, ui.links, ui.selection, vm, onField,
+                            { zoomBy(if (zoom > 1.1f) 1f else 2f, vw / 2f, vh / 2f) },
+                            { selDrag != null },
+                            { side, anchorPage, anchorGlyph, viewportX, viewportY, pg, px, py ->
+                                selAnchorPage = anchorPage
+                                selAnchorGlyph = anchorGlyph
+                                selDrag = SelectionDrag(side, viewportY, pg, viewportX, py)
+                                // Keep the raw viewport X too: re-resolution needs screen X, not page X.
+                                selDrag = SelectionDrag(side, viewportY, pg, viewportX, py)
+                            },
+                            { viewportX, viewportY, pg, py ->
+                                selDrag = SelectionDrag(selDrag?.side ?: 0, viewportY, pg, viewportX, py)
+                            },
+                            { selDrag = null }
+                        )
                     }
                 }
             }
@@ -258,7 +324,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                         )
                     }
                 ) {
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Alignment.CenterVertically) {
                         Icon(MkIcons.ArrowUp, null, tint = Color.White)
                         Icon(MkIcons.ArrowDown, null, tint = Color.White)
                     }
@@ -272,7 +338,12 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
 @Composable
 private fun PdfPageItem(
     doc: Document, index: Int, widthPx: Float, renderWidthPx: Float, hits: List<Hit>, active: Hit?, fields: List<FormField>,
-    links: List<PdfLink>, selection: TextSelection?, vm: EditorViewModel, onField: (FormField) -> Unit, onToggleZoom: () -> Unit
+    links: List<PdfLink>, selection: List<TextSelection>, vm: EditorViewModel, onField: (FormField) -> Unit,
+    onToggleZoom: () -> Unit,
+    isDraggingSelection: () -> Boolean,
+    onSelectionDragStart: (side: Int, anchorPage: Int, anchorGlyph: Int, viewportX: Float, viewportY: Float, page: Int, pageY: Float) -> Unit,
+    onSelectionDrag: (viewportX: Float, viewportY: Float, page: Int, pageY: Float) -> Unit,
+    onSelectionDragEnd: () -> Unit
 ) {
     val page = doc.pages[index]
     val density = LocalDensity.current
@@ -295,16 +366,30 @@ private fun PdfPageItem(
     var hadFocus by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    // Selection-handle drag state (0 = none, 1 = start handle, 2 = end handle).
+
+    // This page's slice of the (possibly multi-page) selection.
+    val sel = selection.firstOrNull { it.page == index && it.rects.isNotEmpty() }
+    val isFirstSelPage = selection.firstOrNull()?.page == index
+    val isLastSelPage = selection.lastOrNull()?.page == index
+
+    // Local handle-drag bookkeeping. Keys never depend on the selection, so a drag is never restarted.
     var dragSide by remember(doc.handle, index) { mutableIntStateOf(0) }
-    var dragAnchor by remember(doc.handle, index) { mutableIntStateOf(0) }
     var dragOx by remember(doc.handle, index) { mutableFloatStateOf(0f) }
     var dragOy by remember(doc.handle, index) { mutableFloatStateOf(0f) }
-    var dragX by remember(doc.handle, index) { mutableFloatStateOf(0f) }
-    var dragY by remember(doc.handle, index) { mutableFloatStateOf(0f) }
+    var boxX by remember(doc.handle, index) { mutableFloatStateOf(0f) }
+    var boxY by remember(doc.handle, index) { mutableFloatStateOf(0f) }
     val dragScope = rememberCoroutineScope()
+    val latestSel by rememberUpdatedState(sel)
+    val latestSelection by rememberUpdatedState(selection)
+    val latestIsDragging by rememberUpdatedState(isDraggingSelection)
+    val latestStartCb by rememberUpdatedState(onSelectionDragStart)
+    val latestMoveCb by rememberUpdatedState(onSelectionDrag)
+    val latestEndCb by rememberUpdatedState(onSelectionDragEnd)
+    val latestVm by rememberUpdatedState(vm)
+
     // Safety: if the selection disappears mid-drag, reset so the Copy bar never stays hidden.
-    LaunchedEffect(selection == null) { if (selection == null) dragSide = 0 }
+    LaunchedEffect(selection.isEmpty()) { if (selection.isEmpty()) dragSide = 0 }
+
     fun commit() {
         hadFocus = false
         val e = editing ?: return
@@ -385,9 +470,7 @@ private fun PdfPageItem(
                         // Convert screen position to page coordinates (same space as engine).
                         val sx = size.width / page.width
                         val sy = size.height / page.height
-                        val x = pos.x / sx
-                        val y = pos.y / sy
-                        vm.selectAt(index, x, y)
+                        vm.selectAt(index, pos.x / sx, pos.y / sy)
                     },
                     onPress = { pos ->
                         val link = linkAt(pos)
@@ -404,7 +487,7 @@ private fun PdfPageItem(
                     onTap = { pos ->
                         if (fieldAt(pos) == null && linkAt(pos) == null) {
                             commit()
-                            if (selection != null) vm.clearSelection()
+                            if (latestSelection.isNotEmpty()) vm.clearSelection()
                         }
                     }
                 )
@@ -433,7 +516,7 @@ private fun PdfPageItem(
                 h.rects.forEach { paint(it, if (h == active) Color(0x88FF8800) else Color(0x66FFE500)) }
             }
             fields.filter { !it.readOnly }.flatMap { it.widgets }.filter { it.page == index && !it.hidden }.forEach { paint(it.rect, Color(0x18008877)) }
-            selection?.takeIf { it.page == index }?.rects?.forEach { paint(it, Color(0x553A86FF)) }
+            sel?.rects?.forEach { paint(it, Color(0x553A86FF)) }
         }
         editing?.let { (f, w) ->
             val sx = widthPx / page.width
@@ -465,8 +548,8 @@ private fun PdfPageItem(
                 )
             }
         }
-        // Floating Copy bar for the current selection (phase 1).
-        selection?.takeIf { it.page == index && it.rects.isNotEmpty() && dragSide == 0 }?.let { sel ->
+        // Floating Copy bar: shown on the first selected page only, and hidden while dragging.
+        if (sel != null && isFirstSelPage && dragSide == 0 && !isDraggingSelection()) {
             val sx = widthPx / page.width
             val sy = heightPx / page.height
             val first = sel.rects.first()
@@ -492,8 +575,8 @@ private fun PdfPageItem(
                 }
             }
         }
-        // Selection handles — Google-Drive style with interactive dragging.
-        selection?.takeIf { it.page == index && it.rects.isNotEmpty() }?.let { sel ->
+        // Selection handles: start handle on the first selected page, end handle on the last one.
+        if (sel != null) {
             val sx = widthPx / page.width
             val sy = heightPx / page.height
             val first = sel.rects.first()
@@ -503,99 +586,99 @@ private fun PdfPageItem(
             val touch = with(density) { 40.dp.toPx() }
             val handleColor = Color(0xFF3A86FF)
 
-            // Both handles hang below the text line; squared corner faces the text.
+            // Both handles hang below the text line; the squared corner faces the text.
             val startCx = (first.left * sx - r).coerceAtLeast(r)
             val startCy = first.bottom * sy + gapY + r
             val endCx = (last.right * sx + r).coerceAtMost(widthPx - r)
             val endCy = last.bottom * sy + gapY + r
 
             Canvas(Modifier.fillMaxSize()) {
-                drawCircle(handleColor, radius = r, center = Offset(startCx, startCy))
-                drawRect(handleColor, topLeft = Offset(startCx, startCy - r), size = Size(r, r))
-                drawCircle(handleColor, radius = r, center = Offset(endCx, endCy))
-                drawRect(handleColor, topLeft = Offset(endCx - r, endCy - r), size = Size(r, r))
-            }
-
-            // Latest values readable inside long-lived gesture lambdas (no stale captures).
-            val latestSel by rememberUpdatedState(sel)
-            val latestSx by rememberUpdatedState(sx)
-            val latestSy by rememberUpdatedState(sy)
-            val startOrigin by rememberUpdatedState(Offset(startCx - touch / 2, startCy - touch / 2))
-            val endOrigin by rememberUpdatedState(Offset(endCx - touch / 2, endCy - touch / 2))
-
-            // Throttled latest-wins updates: snapshotFlow conflates while the engine call runs.
-            LaunchedEffect(dragSide) {
-                if (dragSide == 0) return@LaunchedEffect
-                snapshotFlow { dragX to dragY }.collect { (x, y) ->
-                    vm.extendSelection(index, dragAnchor, x, y)
-                    delay(50)
+                if (isFirstSelPage) {
+                    drawCircle(handleColor, radius = r, center = Offset(startCx, startCy))
+                    drawRect(handleColor, topLeft = Offset(startCx, startCy - r), size = Size(r, r))
+                }
+                if (isLastSelPage) {
+                    drawCircle(handleColor, radius = r, center = Offset(endCx, endCy))
+                    drawRect(handleColor, topLeft = Offset(endCx - r, endCy - r), size = Size(r, r))
                 }
             }
 
-            // START handle: anchor = last glyph of the selection; finger moves the start.
-            val startBox = if (dragSide == 1) Offset(dragOx, dragOy) else startOrigin
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .offset { IntOffset(startBox.x.roundToInt(), startBox.y.roundToInt()) }
-                    .size(with(density) { touch.toDp() })
-                    .pointerInput(doc.handle, doc.generation, index, "startHandle") {
-                        detectDragGestures(
-                            onDragStart = { off ->
-                                val o = startOrigin
-                                dragAnchor = (latestSel.end - 1).coerceAtLeast(0)
-                                dragOx = o.x; dragOy = o.y
-                                dragX = (o.x + off.x) / latestSx
-                                dragY = (o.y + off.y) / latestSy
-                                dragSide = 1
-                            },
-                            onDrag = { change, _ ->
-                                change.consume()
-                                dragX = (dragOx + change.position.x) / latestSx
-                                dragY = (dragOy + change.position.y) / latestSy
-                            },
-                            onDragEnd = {
-                                val a = dragAnchor; val x = dragX; val y = dragY
-                                dragSide = 0
-                                dragScope.launch { vm.extendSelection(index, a, x, y) }
-                            },
-                            onDragCancel = { dragSide = 0 }
-                        )
-                    }
-            )
+            val startOrigin by rememberUpdatedState(Offset(startCx - touch / 2, startCy - touch / 2))
+            val endOrigin by rememberUpdatedState(Offset(endCx - touch / 2, endCy - touch / 2))
+            val latestSx by rememberUpdatedState(sx)
+            val latestSy by rememberUpdatedState(sy)
 
-            // END handle: anchor = first glyph of the selection; finger moves the end.
-            val endBox = if (dragSide == 2) Offset(dragOx, dragOy) else endOrigin
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .offset { IntOffset(endBox.x.roundToInt(), endBox.y.roundToInt()) }
-                    .size(with(density) { touch.toDp() })
-                    .pointerInput(doc.handle, doc.generation, index, "endHandle") {
-                        detectDragGestures(
-                            onDragStart = { off ->
-                                val o = endOrigin
-                                dragAnchor = latestSel.start
-                                dragOx = o.x; dragOy = o.y
-                                dragX = (o.x + off.x) / latestSx
-                                dragY = (o.y + off.y) / latestSy
-                                dragSide = 2
-                            },
-                            onDrag = { change, _ ->
-                                change.consume()
-                                dragX = (dragOx + change.position.x) / latestSx
-                                dragY = (dragOy + change.position.y) / latestSy
-                            },
-                            onDragEnd = {
-                                val a = dragAnchor; val x = dragX; val y = dragY
-                                dragSide = 0
-                                dragScope.launch { vm.extendSelection(index, a, x, y) }
-                            },
-                            onDragCancel = { dragSide = 0 }
-                        )
-                    }
-            )
+            // START handle: the anchor is the LAST glyph of the whole selection (may be on another page).
+            if (isFirstSelPage) {
+                val origin = if (dragSide == 1) Offset(boxX, boxY) else startOrigin
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .offset { IntOffset(origin.x.roundToInt(), origin.y.roundToInt()) }
+                        .size(with(density) { touch.toDp() })
+                        .pointerInput(doc.handle, doc.generation, index, "startHandle") {
+                            detectDragGestures(
+                                onDragStart = { off ->
+                                    val o = startOrigin
+                                    val whole = latestSelection
+                                    val anchorPage = whole.lastOrNull()?.page ?: index
+                                    val anchorGlyph = ((whole.lastOrNull()?.end ?: 1) - 1).coerceAtLeast(0)
+                                    boxX = o.x; boxY = o.y
+                                    dragOx = o.x; dragOy = o.y
+                                    dragSide = 1
+                                    latestStartCb(1, anchorPage, anchorGlyph, o.x + off.x, o.y + off.y, index, (o.y + off.y) / latestSy)
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val vx = boxX + change.position.x
+                                    val vy = boxY + change.position.y
+                                    latestMoveCb(vx, vy, index, vy / latestSy)
+                                },
+                                onDragEnd = {
+                                    dragSide = 0
+                                    latestEndCb()
+                                },
+                                onDragCancel = { dragSide = 0; latestEndCb() }
+                            )
+                        }
+                )
+            }
+            // END handle: the anchor is the FIRST glyph of the whole selection.
+            if (isLastSelPage) {
+                val origin = if (dragSide == 2) Offset(boxX, boxY) else endOrigin
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .offset { IntOffset(origin.x.roundToInt(), origin.y.roundToInt()) }
+                        .size(with(density) { touch.toDp() })
+                        .pointerInput(doc.handle, doc.generation, index, "endHandle") {
+                            detectDragGestures(
+                                onDragStart = { off ->
+                                    val o = endOrigin
+                                    val whole = latestSelection
+                                    val anchorPage = whole.firstOrNull()?.page ?: index
+                                    val anchorGlyph = whole.firstOrNull()?.start ?: 0
+                                    boxX = o.x; boxY = o.y
+                                    dragOx = o.x; dragOy = o.y
+                                    dragSide = 2
+                                    latestStartCb(2, anchorPage, anchorGlyph, o.x + off.x, o.y + off.y, index, (o.y + off.y) / latestSy)
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val vx = boxX + change.position.x
+                                    val vy = boxY + change.position.y
+                                    latestMoveCb(vx, vy, index, vy / latestSy)
+                                },
+                                onDragEnd = {
+                                    dragSide = 0
+                                    latestEndCb()
+                                },
+                                onDragCancel = { dragSide = 0; latestEndCb() }
+                            )
+                        }
+                )
+            }
         }
-        if (shown == null || error != null) Text(error ?: "Rendering…", color = if (error != null) Color.Red else Color.DarkGray)
+        if (shown == null || error != null) Text(error ?: "Rendering...", color = if (error != null) Color.Red else Color.DarkGray)
     }
 }
