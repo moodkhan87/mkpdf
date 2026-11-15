@@ -480,11 +480,15 @@ private fun PdfPageItem(
                     .align(Alignment.TopStart)
                     .offset { IntOffset(left.coerceAtLeast(0), top.coerceAtLeast(0)) }
             ) {
-                TextButton(
-                    onClick = { vm.copySelection() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
-                ) {
-                    Text("Copy")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = { vm.copySelection() },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                    ) { Text("Copy") }
+                    TextButton(
+                        onClick = { vm.selectAll(index) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                    ) { Text("Select all") }
                 }
             }
         }
