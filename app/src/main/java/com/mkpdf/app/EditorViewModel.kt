@@ -24,11 +24,13 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
     private var searchJob:Job?=null
     /** The file the current document was opened from (or last saved to). Null means Save falls back to Save As. */
     private var sourceUri:Uri?=null
-        /** True for a document that exists only in memory (for example a combined file): it must count as unsaved. */
+    /** True for a document that exists only in memory (for example a combined file): it must count as unsaved. */
     private var forceDirty=false
+
     init { perform {repo.run {init()};_ui.update {it.copy(recoveryAvailable=repo.saf.recovery.isFile)}} }
     fun dismissError() {_ui.update {it.copy(error=null)}}
     fun dismissMessage() {_ui.update {it.copy(message=null)}}
+
     private fun perform(block:suspend ()->Unit) {
         if(_ui.value.busy)return
         viewModelScope.launch {
@@ -38,9 +40,10 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             finally {_ui.update {it.copy(busy=false)}}
         }
     }
+
     private suspend fun publish(value:JSONObject,keepFields:Boolean=false) {
         val d=value.document().let {if(forceDirty)it.copy(dirty=true) else it}
-        _ui.update {it.copy(doc=d,lines=emptyList(),fields=if(keepFields)it.fields else emptyList())}
+        _ui.update {it.copy(doc=d,lines=emptyList(),fields=if(keepFields)it.fields else emptyList(),selection=emptyList())}
         try {repo.run {call("autosave",d)}}
         catch(e:Exception) {_ui.update {it.copy(error="Edit succeeded, but local recovery could not be saved: ${e.message}")}}
         // Load the form fields in the background so tapping a field works without a menu step.
@@ -67,6 +70,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         catch (e: Exception) { /* Documents without links still open normally. */ }
         search(_ui.value.query)
     }
+
     private suspend fun replace(value:JSONObject,unsaved:Boolean=false) {
         forceDirty=unsaved
         val old=_ui.value.doc
@@ -74,7 +78,9 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         publish(value)
         if(old!=null && old.handle!=value.getLong("handle"))repo.run {call("close",old);clearCache()}
     }
+
     fun newDocument()=perform {replace(repo.run {call("blank")});sourceUri=null}
+
     fun open(uri:Uri)=perform {
         try {
             val value=repo.run {
@@ -91,16 +97,20 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             } else throw e
         }
     }
+
     fun reopenRecent() {repo.saf.recent()?.let(::open)}
+
     fun recover()=perform {
         val d=repo.run {call("open",null,"path" to saf.recovery.absolutePath,"name" to "Recovered.pdf")}
         replace(d);sourceUri=null;_ui.update {it.copy(recoveryAvailable=false)}
     }
+
     fun edit(op:String,vararg args:Pair<String,Any?>) {
         val d=_ui.value.doc?:return
         searchJob?.cancel()
         perform {publish(repo.run {call(op,d,*args)})}
     }
+
     fun importPdf(uri:Uri,at:Int,pages:List<Int>?=null) {
         val d=_ui.value.doc?:return
         perform {
@@ -111,6 +121,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             };publish(value)
         }
     }
+
     fun importImage(uri:Uri,page:Int,rect:List<Double>?,asPage:Boolean) {
         val d=_ui.value.doc?:return
         perform {
@@ -121,6 +132,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             };publish(value)
         }
     }
+
     fun combine(uris:List<Uri>)=perform {
         if(uris.size<2)throw IllegalArgumentException("Select at least two PDFs")
         val value=repo.run {
@@ -131,6 +143,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             } finally {staged.forEach {it.second.delete()}}
         };replace(value);sourceUri=null
     }
+
     /** Combine the chosen files with the current document (including its unsaved edits), before or after it. */
     fun combineWithCurrent(uris:List<Uri>,before:Boolean) {
         val d=_ui.value.doc?:return
@@ -149,6 +162,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             replace(value);sourceUri=null
         }
     }
+
     fun saveAs(uri:Uri) {
         val d=_ui.value.doc?:return
         perform {
@@ -159,6 +173,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             };publish(value);sourceUri=uri;_ui.update {it.copy(message="Saved a PDF copy. Original source was not overwritten.")}
         }
     }
+
     /** Save to the file the document came from; if that is not possible, ask the UI to open Save As. */
     fun saveInPlace(onFallback:()->Unit) {
         val d=_ui.value.doc?:return
@@ -182,6 +197,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             if(failed)onFallback()
         }
     }
+
     fun deletePages(pages:List<Int>) {
         val d=_ui.value.doc?:return
         searchJob?.cancel()
@@ -196,6 +212,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             last?.let {publish(it)}
         }
     }
+
     /** Write one PDF per range (0-based, inclusive) into the chosen folder. */
     fun splitRanges(tree:Uri,ranges:List<IntRange>) {
         val d=_ui.value.doc?:return
@@ -213,15 +230,17 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                     }
                 }
                 _ui.update {it.copy(message="Wrote $count PDF files.")}
-            }catch(e:Exception){throw IllegalStateException("Split stopped after $count files: ${e.message}",e)}
+            }catch(e:Exception){throw IllegalStateException("Split stopped after $count files: $count",e)}
         }
     }
+
     /** Rotate every page of the document by 90, 180 or 270 degrees clockwise, as one undo step. */
     fun rotateAll(degrees:Int) {
         val d=_ui.value.doc?:return
         searchJob?.cancel()
         perform {publish(repo.run {call("rotate",d,"pages" to d.pages.indices.toList(),"degrees" to degrees)})}
     }
+
     /** Close the current document and go back to the start screen. Also removes the local recovery copy. */
     fun closeDocument() {
         val d=_ui.value.doc?:return
@@ -230,9 +249,10 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             repo.run {call("close",d);clearCache();saf.recovery.delete()}
             sourceUri=null
             _ui.update {it.copy(doc=null,query="",hits=emptyList(),selectedHit=-1,searching=false,
-                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null,links=emptyList(),selection=null)}
+                lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null,links=emptyList(),selection=emptyList())}
         }
     }
+
     /** Open a PDF that another app handed to MKpdf (WhatsApp, email, downloads). Save always asks for a new file. */
     fun openExternal(uri:Uri)=perform {
         try {
@@ -250,6 +270,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             } else throw e
         }
     }
+
     fun openWithPassword(uri: Uri, password: String) = perform {
         try {
             val value = repo.run {
@@ -261,7 +282,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 }
             }
             replace(value)
-            sourceUri = uri          // بعد نجاح كلمة المرور نعتبره ملف عادي يمكن حفظه في مكانه
+            sourceUri = uri
             _ui.update { it.copy(passwordUri = null) }
         } catch (e: Exception) {
             val msg = e.message ?: ""
@@ -274,81 +295,113 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
     fun clearPasswordPrompt() {
         _ui.update { it.copy(passwordUri = null, error = null) }
     }
+
     /** Called when the user taps a link. Internal links jump immediately; external ones are exposed for confirmation. */
     fun onLinkTapped(link: PdfLink) {
         if (link.kind == "page") {
-            // Internal link: jump to the target page (0-based).
             val targetPage = link.target.toIntOrNull() ?: return
-            // The UI will scroll via selectedHit or we can expose a separate event; for now we use a simple message + the UI listens.
             _ui.update { it.copy(message = "GoToPage:$targetPage") }
         } else {
-            // External: show the full target for confirmation in the UI.
             _ui.update { it.copy(message = "OpenLink:${link.target}") }
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Text selection. A selection is a list of per-page slices, so it can
+    // span several pages. Live drag calls bypass the busy gate (read-only).
+    // ---------------------------------------------------------------------
+
+    private fun sameDoc(d: Document): Boolean {
+        val cur = _ui.value.doc ?: return false
+        return cur.handle == d.handle && cur.generation == d.generation
+    }
+
     fun selectAt(page: Int, x: Float, y: Float) {
         val d = _ui.value.doc ?: return
         perform {
             val result = repo.run {
                 call("select_at", d, "page" to page, "x" to x.toDouble(), "y" to y.toDouble())
             }
-            val sel = if (result.getInt("end") > result.getInt("start")) {
-                result.textSelection(page)
-            } else null
-            _ui.update { it.copy(selection = sel) }
+            if (sameDoc(d)) _ui.update { it.copy(selection = result.selectionList(page)) }
         }
     }
-        fun selectRange(page: Int, start: Int, end: Int) {
+
+    fun selectRange(page: Int, start: Int, end: Int) {
         val d = _ui.value.doc ?: return
-        if (end <= start) {
-            clearSelection()
-            return
-        }
+        if (end <= start) { clearSelection(); return }
         perform {
             val result = repo.run {
                 call("select_range", d, "page" to page, "start" to start, "end" to end)
             }
-            val sel = if (result.getInt("end") > result.getInt("start")) {
-                result.textSelection(page)
-            } else null
-            _ui.update { it.copy(selection = sel) }
+            if (sameDoc(d)) _ui.update { it.copy(selection = result.selectionList(page)) }
         }
     }
-        /** Live selection extension while a handle is dragged. Read-only: bypasses the busy gate. */
-    suspend fun extendSelection(page: Int, anchor: Int, x: Float, y: Float) {
-        val d = _ui.value.doc ?: return
-        try {
-            val result = repo.run {
-                call("select_to", d, "page" to page, "anchor" to anchor,
-                    "x" to x.toDouble(), "y" to y.toDouble())
-            }
-            val cur = _ui.value.doc
-            if (cur == null || cur.handle != d.handle || cur.generation != d.generation) return
-            val sel = if (result.getInt("end") > result.getInt("start")) result.textSelection(page) else null
-            _ui.update { it.copy(selection = sel) }
-        } catch (e: CancellationException) { throw e }
-        catch (_: Exception) { /* keep the previous selection if the engine hiccups mid-drag */ }
-    }
+
     /** Select every glyph on the given page (Google-Drive style: current page, not the document). */
     fun selectAll(page: Int) {
         val d = _ui.value.doc ?: return
         perform {
             val result = repo.run { call("select_page", d, "page" to page) }
-            val sel = if (result.getInt("end") > result.getInt("start")) result.textSelection(page) else null
-            _ui.update { it.copy(selection = sel) }
+            if (sameDoc(d)) _ui.update { it.copy(selection = result.selectionList(page)) }
         }
     }
 
+    /** Live extension while a handle is dragged. The focus may sit on ANY page. */
+    suspend fun extendSelection(anchorPage: Int, anchorGlyph: Int, page: Int, x: Float, y: Float) {
+        val d = _ui.value.doc ?: return
+        try {
+            val result = repo.run {
+                call("select_span_to", d, "anchor_page" to anchorPage, "anchor_glyph" to anchorGlyph,
+                    "page" to page, "x" to x.toDouble(), "y" to y.toDouble())
+            }
+            if (!sameDoc(d)) return
+            val pages = result.selectionPages()
+            if (pages.isNotEmpty()) _ui.update { it.copy(selection = pages) }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { /* keep the previous selection if the engine hiccups mid-drag */ }
+    }
+
+    /** Exact span used when a drag ends outside any page (gap, margin, past the last page). */
+    suspend fun selectSpan(startPage: Int, start: Int, endPage: Int, end: Int) {
+        val d = _ui.value.doc ?: return
+        try {
+            val result = repo.run {
+                call("select_span", d, "start_page" to startPage, "start" to start,
+                    "end_page" to endPage, "end" to end)
+            }
+            if (!sameDoc(d)) return
+            val pages = result.selectionPages()
+            if (pages.isNotEmpty()) _ui.update { it.copy(selection = pages) }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { }
+    }
+
+    /** Nearest glyph index on a page, or -1 when the page has no text layer. */
+    suspend fun glyphAt(page: Int, x: Float, y: Float): Int {
+        val d = _ui.value.doc ?: return -1
+        return try {
+            repo.run {
+                call("glyph_at", d, "page" to page, "x" to x.toDouble(), "y" to y.toDouble()).getInt("index")
+            }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { -1 }
+    }
+
     fun clearSelection() {
-        _ui.update { it.copy(selection = null) }
+        _ui.update { it.copy(selection = emptyList()) }
     }
 
     fun copySelection() {
-        val text = _ui.value.selection?.text ?: return
+        val parts = _ui.value.selection
+        if (parts.isEmpty()) return
+        val text = parts.sortedBy { it.page }.joinToString("\n") { it.text }
         val clipboard = getApplication<Application>().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("MKpdf", text))
-        _ui.update { it.copy(message = "Copied", selection = null) }
+        _ui.update { it.copy(message = "Copied", selection = emptyList()) }
     }
+
+    // ---------------------------------------------------------------------
+
     /** Make a temporary copy of the current document (with unsaved edits) for printing or sharing. */
     fun prepareCopy(onReady:(File,String,Int)->Unit) {
         val d=_ui.value.doc?:return
@@ -361,7 +414,8 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             onReady(file,d.name,d.pages.size)
         }
     }
-        /** Combine the given files, in order, into a new unsaved document. */
+
+    /** Combine the given files, in order, into a new unsaved document. */
     fun combineFiles(uris:List<Uri>)=perform {
         if(uris.size<2)throw IllegalArgumentException("Select at least two PDFs")
         if(uris.size>32)throw IllegalArgumentException("Combine up to 32 files at once")
@@ -374,14 +428,15 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         }
         replace(value,true);sourceUri=null
     }
-        /** Add other files to the OPEN document (before or after it, in the order given; null marks the open document). Each file is one undo step. */
+
+    /** Add other files to the OPEN document (before or after it, in the order given; null marks the open document). Each file is one undo step. */
     fun combineIntoOpen(items:List<Uri?>) {
         val d0=_ui.value.doc?:return
         val idx=items.indexOf(null)
         if(idx<0||items.size<2)return
         if(items.size>32){_ui.update {it.copy(error="Combine up to 32 files at once")};return}
         val before=items.subList(0,idx).filterNotNull()
-        val after=items.subList(idx+1,items.size).filterNotNull()
+        val after=items.subList(idx+1).filterNotNull()
         searchJob?.cancel()
         perform {
             var cur=d0
@@ -405,10 +460,10 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
                 cur=v.document();last=v
             }
             last?.let {publish(it)}
-            // The result is a new document in practice: Save always asks for a new file, the original is untouched.
             sourceUri=null
         }
     }
+
     fun loadLines(page:Int) {
         val d=_ui.value.doc?:return
         perform {
@@ -418,10 +473,12 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             _ui.update {it.copy(lines=lines)}
         }
     }
+
     fun loadFields() {
         val d=_ui.value.doc?:return
         perform {val fields=repo.run {call("fields",d).formFields()};_ui.update {it.copy(fields=fields)}}
     }
+
     fun setField(name:String,value:Any?) {
         viewModelScope.launch {
             // Another operation (for example the previous field's autosave) may still be running: wait instead of dropping the edit.
@@ -433,11 +490,13 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             }
         }
     }
+
     suspend fun render(d:Document,page:Int,width:Int):Bitmap=repo.run {render(d,page,width)}
+
     /** Normalize Arabic query for better matching (remove tashkeel + unify letter forms). */
     private fun normalizeArabic(text: String): String {
         return text
-            .replace(Regex("[\\u064B-\\u065F\\u0670]"), "") // tashkeel
+            .replace(Regex("[\u064B-\u065F\u0670]"), "") // tashkeel
             .replace("أ", "ا")
             .replace("إ", "ا")
             .replace("آ", "ا")
@@ -446,6 +505,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             .replace("ؤ", "و")
             .replace("ئ", "ي")
     }
+
     fun search(query:String) {
         searchJob?.cancel()
         _ui.update {it.copy(query=query,hits=emptyList(),selectedHit=-1,searching=false)}
@@ -455,9 +515,9 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             delay(180)
             _ui.update {it.copy(searching=true)}
             try {
+                val searchQuery = normalizeArabic(query)
                 for(page in d.pages.indices) {
                     coroutineContext.ensureActive()
-                    val searchQuery = normalizeArabic(query)
                     val results=repo.run {call("search_page",d,"page" to page,"query" to searchQuery).getJSONArray("hits").objects().map {h ->
                         val rs=h.getJSONArray("rects")
                         Hit(h.getInt("page"),h.getInt("start"),(0 until rs.length()).map {rs.getJSONArray(it).rect()})
@@ -474,9 +534,11 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             finally {if(_ui.value.query==query)_ui.update {it.copy(searching=false)}}
         }
     }
+
     fun navigateHit(delta:Int) {
         _ui.update {s -> if(s.hits.isEmpty())s else s.copy(selectedHit=if(s.selectedHit<0)0 else (s.selectedHit+delta+s.hits.size)%s.hits.size)}
     }
+
     override fun onCleared() {
         val d=_ui.value.doc
         // A separate scope allows native close after viewModelScope has been cancelled.
