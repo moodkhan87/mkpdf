@@ -269,15 +269,21 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                             doc, index, pageW, renderW, ui.hits, active, ui.fields, ui.links, ui.selection, vm, onField,
                             { zoomBy(if (zoom > 1.1f) 1f else 2f, vw / 2f, vh / 2f) },
                             { selDrag != null },
-                            { side, anchorPage, anchorGlyph, viewportX, viewportY, pg, px, py ->
+                            { side, anchorPage, anchorGlyph, localX, localY, pg, _ ->
                                 selAnchorPage = anchorPage
                                 selAnchorGlyph = anchorGlyph
-                                selDrag = SelectionDrag(side, viewportY, pg, viewportX, py)
-                                // Keep the raw viewport X too: re-resolution needs screen X, not page X.
-                                selDrag = SelectionDrag(side, viewportY, pg, viewportX, py)
+                                val left = if (zoom <= 1f) (vw - vw * zoom) / 2f else clampPan(panX, zoom)
+                                val topOffset = -listState.layoutInfo.viewportStartOffset
+                                val itemTop = listState.layoutInfo.visibleItemsInfo
+                                    .firstOrNull { it.index == pg }?.let { it.offset + topOffset } ?: 0
+                                selDrag = SelectionDrag(side, itemTop + localY, pg, left + gap + localX, 0f)
                             },
-                            { viewportX, viewportY, pg, py ->
-                                selDrag = SelectionDrag(selDrag?.side ?: 0, viewportY, pg, viewportX, py)
+                            { localX, localY, pg, _ ->
+                                val left = if (zoom <= 1f) (vw - vw * zoom) / 2f else clampPan(panX, zoom)
+                                val topOffset = -listState.layoutInfo.viewportStartOffset
+                                val itemTop = listState.layoutInfo.visibleItemsInfo
+                                    .firstOrNull { it.index == pg }?.let { it.offset + topOffset } ?: 0
+                                selDrag = SelectionDrag(selDrag?.side ?: 0, itemTop + localY, pg, left + gap + localX, 0f)
                             },
                             { selDrag = null }
                         )
@@ -324,7 +330,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                         )
                     }
                 ) {
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Alignment.CenterVertically) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Icon(MkIcons.ArrowUp, null, tint = Color.White)
                         Icon(MkIcons.ArrowDown, null, tint = Color.White)
                     }
