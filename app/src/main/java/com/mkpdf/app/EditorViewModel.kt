@@ -329,6 +329,15 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { /* keep the previous selection if the engine hiccups mid-drag */ }
     }
+    /** Select every glyph on the given page (Google-Drive style: current page, not the document). */
+    fun selectAll(page: Int) {
+        val d = _ui.value.doc ?: return
+        perform {
+            val result = repo.run { call("select_page", d, "page" to page) }
+            val sel = if (result.getInt("end") > result.getInt("start")) result.textSelection(page) else null
+            _ui.update { it.copy(selection = sel) }
+        }
+    }
 
     fun clearSelection() {
         _ui.update { it.copy(selection = null) }
