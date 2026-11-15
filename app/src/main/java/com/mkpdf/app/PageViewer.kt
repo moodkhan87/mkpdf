@@ -303,6 +303,8 @@ private fun PdfPageItem(
     var dragX by remember(doc.handle, index) { mutableFloatStateOf(0f) }
     var dragY by remember(doc.handle, index) { mutableFloatStateOf(0f) }
     val dragScope = rememberCoroutineScope()
+    // Safety: if the selection disappears mid-drag, reset so the Copy bar never stays hidden.
+    LaunchedEffect(selection == null) { if (selection == null) dragSide = 0 }
     fun commit() {
         hadFocus = false
         val e = editing ?: return
@@ -530,6 +532,7 @@ private fun PdfPageItem(
             val startBox = if (dragSide == 1) Offset(dragOx, dragOy) else startOrigin
             Box(
                 Modifier
+                    .align(Alignment.TopStart)
                     .offset { IntOffset(startBox.x.roundToInt(), startBox.y.roundToInt()) }
                     .size(with(density) { touch.toDp() })
                     .pointerInput(doc.handle, doc.generation, index, "startHandle") {
@@ -561,6 +564,7 @@ private fun PdfPageItem(
             val endBox = if (dragSide == 2) Offset(dragOx, dragOy) else endOrigin
             Box(
                 Modifier
+                    .align(Alignment.TopStart)
                     .offset { IntOffset(endBox.x.roundToInt(), endBox.y.roundToInt()) }
                     .size(with(density) { touch.toDp() })
                     .pointerInput(doc.handle, doc.generation, index, "endHandle") {
