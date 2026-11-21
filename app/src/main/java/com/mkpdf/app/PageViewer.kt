@@ -253,8 +253,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                             if (dx != 0f) panX = clampPan(panX + dx, zoom)
                         }
                     } while (event.changes.any { it.pressed })
-                    // Every gesture that ends here means no finger is on a handle anymore.
-                    if (down == 0) endSelectionDrag()
+                    // The gesture ended: no finger is on a handle anymore.
+                    endSelectionDrag()
                 }
             }
     ) {
