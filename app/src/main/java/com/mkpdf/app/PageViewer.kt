@@ -96,6 +96,9 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     var selDrag by remember(doc.handle) { mutableStateOf<SelectionDrag?>(null) }
     var selAnchorPage by remember(doc.handle) { mutableIntStateOf(0) }
     var selAnchorGlyph by remember(doc.handle) { mutableIntStateOf(0) }
+    // True ONLY while a finger is physically down on a handle. The auto-scroll loop must never
+    // run without it, otherwise ordinary scrolling would keep extending the selection.
+    var fingerDown by remember(doc.handle) { mutableStateOf(false) }
     val latestList by rememberUpdatedState(listState)
     val latestVm by rememberUpdatedState(vm)
     val latestViewport by rememberUpdatedState(viewport)
@@ -104,6 +107,9 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     val latestGap by rememberUpdatedState(gap)
     val latestDoc by rememberUpdatedState(doc)
 
+    // Safety net: any new touch anywhere cancels a stale selection drag.
+    fun endSelectionDrag() { fingerDown = false; selDrag = null }
+
     // Re-render the page images only after the pinch has settled.
     LaunchedEffect(zoom) { delay(250); renderZoom = zoom }
     // Show the scroll handle on touch or scroll; hide it two seconds after the last activity.
@@ -111,6 +117,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
         showHandle = true
         if (!scrolling && !dragging) { delay(2000); showHandle = false }
     }
+    // A new document must never inherit a running drag.
+    LaunchedEffect(doc.handle, doc.generation) { endSelectionDrag() }
 
     fun clampPan(x: Float, z: Float): Float = if (z <= 1f) 0f else x.coerceIn(viewport.width * (1f - z), 0f)
     fun pageHeightPx(i: Int, z: Float): Float {
@@ -176,13 +184,14 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
         }
     }
 
-    // While a handle is held near an edge: scroll the list and keep extending the selection.
-    LaunchedEffect(selDrag != null) {
-        if (selDrag == null) return@LaunchedEffect
+    // While a handle is HELD near an edge: scroll the list and keep extending the selection.
+    // Runs only while fingerDown is true, so lifting the finger always stops it.
+    LaunchedEffect(fingerDown) {
+        if (!fingerDown) return@LaunchedEffect
         val edge = with(density) { 72.dp.toPx() }
-        while (true) {
+        while (fingerDown) {
             val d = selDrag
-            if (d == null) break
+            if (d == null) { fingerDown = false; break }
             val vh = latestViewport.height.toFloat()
             val speed = when {
                 vh <= 0f -> 0f
@@ -228,6 +237,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val down = event.changes.count { it.pressed }
                         if (down >= 2) {
+                            // A second finger means pinch/scroll, never a handle drag.
+                            endSelectionDrag()
                             val zc = event.calculateZoom()
                             val c = event.calculateCentroid(useCurrent = true)
                             val pan = event.calculatePan()
@@ -242,6 +253,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                             if (dx != 0f) panX = clampPan(panX + dx, zoom)
                         }
                     } while (event.changes.any { it.pressed })
+                    // Every gesture that ends here means no finger is on a handle anymore.
+                    if (down == 0) endSelectionDrag()
                 }
             }
     ) {
@@ -268,8 +281,8 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                         PdfPageItem(
                             doc, index, pageW, renderW, ui.hits, active, ui.fields, ui.links, ui.selection, vm, onField,
                             { zoomBy(if (zoom > 1.1f) 1f else 2f, vw / 2f, vh / 2f) },
-                            { selDrag != null },
-                            { side, anchorPage, anchorGlyph, localX, localY, pg, _ ->
+                            { fingerDown },
+                            { side, anchorPage, anchorGlyph, localX, localY, pg ->
                                 selAnchorPage = anchorPage
                                 selAnchorGlyph = anchorGlyph
                                 val left = if (zoom <= 1f) (vw - vw * zoom) / 2f else clampPan(panX, zoom)
@@ -277,15 +290,18 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                                 val itemTop = listState.layoutInfo.visibleItemsInfo
                                     .firstOrNull { it.index == pg }?.let { it.offset + topOffset } ?: 0
                                 selDrag = SelectionDrag(side, itemTop + localY, pg, left + gap + localX, 0f)
+                                fingerDown = true
                             },
-                            { localX, localY, pg, _ ->
-                                val left = if (zoom <= 1f) (vw - vw * zoom) / 2f else clampPan(panX, zoom)
-                                val topOffset = -listState.layoutInfo.viewportStartOffset
-                                val itemTop = listState.layoutInfo.visibleItemsInfo
-                                    .firstOrNull { it.index == pg }?.let { it.offset + topOffset } ?: 0
-                                selDrag = SelectionDrag(selDrag?.side ?: 0, itemTop + localY, pg, left + gap + localX, 0f)
+                            { localX, localY, pg ->
+                                if (fingerDown) {
+                                    val left = if (zoom <= 1f) (vw - vw * zoom) / 2f else clampPan(panX, zoom)
+                                    val topOffset = -listState.layoutInfo.viewportStartOffset
+                                    val itemTop = listState.layoutInfo.visibleItemsInfo
+                                        .firstOrNull { it.index == pg }?.let { it.offset + topOffset } ?: 0
+                                    selDrag = SelectionDrag(selDrag?.side ?: 0, itemTop + localY, pg, left + gap + localX, 0f)
+                                }
                             },
-                            { selDrag = null }
+                            { endSelectionDrag() }
                         )
                     }
                 }
@@ -318,7 +334,7 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
                     shape = RoundedCornerShape(20.dp),
                     modifier = Modifier.size(36.dp, 72.dp).pointerInput(track, count) {
                         detectVerticalDragGestures(
-                            onDragStart = { dragFraction = progress; dragging = true },
+                            onDragStart = { endSelectionDrag(); dragFraction = progress; dragging = true },
                             onDragEnd = { dragging = false },
                             onDragCancel = { dragging = false },
                             onVerticalDrag = { change, dy ->
@@ -347,8 +363,8 @@ private fun PdfPageItem(
     links: List<PdfLink>, selection: List<TextSelection>, vm: EditorViewModel, onField: (FormField) -> Unit,
     onToggleZoom: () -> Unit,
     isDraggingSelection: () -> Boolean,
-    onSelectionDragStart: (side: Int, anchorPage: Int, anchorGlyph: Int, viewportX: Float, viewportY: Float, page: Int, pageY: Float) -> Unit,
-    onSelectionDrag: (viewportX: Float, viewportY: Float, page: Int, pageY: Float) -> Unit,
+    onSelectionDragStart: (side: Int, anchorPage: Int, anchorGlyph: Int, localX: Float, localY: Float, page: Int) -> Unit,
+    onSelectionDrag: (localX: Float, localY: Float, page: Int) -> Unit,
     onSelectionDragEnd: () -> Unit
 ) {
     val page = doc.pages[index]
@@ -380,20 +396,14 @@ private fun PdfPageItem(
 
     // Local handle-drag bookkeeping. Keys never depend on the selection, so a drag is never restarted.
     var dragSide by remember(doc.handle, index) { mutableIntStateOf(0) }
-    var dragOx by remember(doc.handle, index) { mutableFloatStateOf(0f) }
-    var dragOy by remember(doc.handle, index) { mutableFloatStateOf(0f) }
     var boxX by remember(doc.handle, index) { mutableFloatStateOf(0f) }
     var boxY by remember(doc.handle, index) { mutableFloatStateOf(0f) }
-    val dragScope = rememberCoroutineScope()
-    val latestSel by rememberUpdatedState(sel)
     val latestSelection by rememberUpdatedState(selection)
-    val latestIsDragging by rememberUpdatedState(isDraggingSelection)
     val latestStartCb by rememberUpdatedState(onSelectionDragStart)
     val latestMoveCb by rememberUpdatedState(onSelectionDrag)
     val latestEndCb by rememberUpdatedState(onSelectionDragEnd)
-    val latestVm by rememberUpdatedState(vm)
 
-    // Safety: if the selection disappears mid-drag, reset so the Copy bar never stays hidden.
+    // Safety: if the selection disappears, or the shared drag ended elsewhere, drop the local flag.
     LaunchedEffect(selection.isEmpty()) { if (selection.isEmpty()) dragSide = 0 }
 
     fun commit() {
@@ -402,7 +412,13 @@ private fun PdfPageItem(
         editing = null
         if (editText != e.first.values.firstOrNull().orEmpty()) vm.setField(e.first.name, editText)
     }
-    DisposableEffect(Unit) { onDispose { commit() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            commit()
+            // Leaving composition (page scrolled away) must not leave a drag running.
+            if (dragSide != 0) { dragSide = 0; latestEndCb() }
+        }
+    }
     LaunchedEffect(editing) {
         if (editing != null) {
             hadFocus = false
@@ -581,15 +597,19 @@ private fun PdfPageItem(
                 }
             }
         }
-        // Selection handles: start handle on the first selected page, end handle on the last one.
-        if (sel != null) {
+        // Selection handles. IMPORTANT: a handle's touch box stays composed while its own drag is
+        // running, even if this page stops being the first/last selected page. Removing the node
+        // mid-gesture would cancel the drag WITHOUT calling onDragEnd/onDragCancel.
+        val showStartHandle = sel != null && (isFirstSelPage || dragSide == 1)
+        val showEndHandle = sel != null && (isLastSelPage || dragSide == 2)
+        if (sel != null && (showStartHandle || showEndHandle)) {
             val sx = widthPx / page.width
             val sy = heightPx / page.height
             val first = sel.rects.first()
             val last = sel.rects.last()
             val r = with(density) { 11.dp.toPx() }
             val gapY = with(density) { 2.dp.toPx() }
-            val touch = with(density) { 40.dp.toPx() }
+            val touch = with(density) { 32.dp.toPx() }
             val handleColor = Color(0xFF3A86FF)
 
             // Both handles hang below the text line; the squared corner faces the text.
@@ -609,13 +629,12 @@ private fun PdfPageItem(
                 }
             }
 
+            val latestSy by rememberUpdatedState(sy)
             val startOrigin by rememberUpdatedState(Offset(startCx - touch / 2, startCy - touch / 2))
             val endOrigin by rememberUpdatedState(Offset(endCx - touch / 2, endCy - touch / 2))
-            val latestSx by rememberUpdatedState(sx)
-            val latestSy by rememberUpdatedState(sy)
 
             // START handle: the anchor is the LAST glyph of the whole selection (may be on another page).
-            if (isFirstSelPage) {
+            if (showStartHandle) {
                 val origin = if (dragSide == 1) Offset(boxX, boxY) else startOrigin
                 Box(
                     Modifier
@@ -630,27 +649,21 @@ private fun PdfPageItem(
                                     val anchorPage = whole.lastOrNull()?.page ?: index
                                     val anchorGlyph = ((whole.lastOrNull()?.end ?: 1) - 1).coerceAtLeast(0)
                                     boxX = o.x; boxY = o.y
-                                    dragOx = o.x; dragOy = o.y
                                     dragSide = 1
-                                    latestStartCb(1, anchorPage, anchorGlyph, o.x + off.x, o.y + off.y, index, (o.y + off.y) / latestSy)
+                                    latestStartCb(1, anchorPage, anchorGlyph, o.x + off.x, o.y + off.y, index)
                                 },
                                 onDrag = { change, _ ->
                                     change.consume()
-                                    val vx = boxX + change.position.x
-                                    val vy = boxY + change.position.y
-                                    latestMoveCb(vx, vy, index, vy / latestSy)
+                                    latestMoveCb(boxX + change.position.x, boxY + change.position.y, index)
                                 },
-                                onDragEnd = {
-                                    dragSide = 0
-                                    latestEndCb()
-                                },
+                                onDragEnd = { dragSide = 0; latestEndCb() },
                                 onDragCancel = { dragSide = 0; latestEndCb() }
                             )
                         }
                 )
             }
             // END handle: the anchor is the FIRST glyph of the whole selection.
-            if (isLastSelPage) {
+            if (showEndHandle) {
                 val origin = if (dragSide == 2) Offset(boxX, boxY) else endOrigin
                 Box(
                     Modifier
@@ -665,20 +678,14 @@ private fun PdfPageItem(
                                     val anchorPage = whole.firstOrNull()?.page ?: index
                                     val anchorGlyph = whole.firstOrNull()?.start ?: 0
                                     boxX = o.x; boxY = o.y
-                                    dragOx = o.x; dragOy = o.y
                                     dragSide = 2
-                                    latestStartCb(2, anchorPage, anchorGlyph, o.x + off.x, o.y + off.y, index, (o.y + off.y) / latestSy)
+                                    latestStartCb(2, anchorPage, anchorGlyph, o.x + off.x, o.y + off.y, index)
                                 },
                                 onDrag = { change, _ ->
                                     change.consume()
-                                    val vx = boxX + change.position.x
-                                    val vy = boxY + change.position.y
-                                    latestMoveCb(vx, vy, index, vy / latestSy)
+                                    latestMoveCb(boxX + change.position.x, boxY + change.position.y, index)
                                 },
-                                onDragEnd = {
-                                    dragSide = 0
-                                    latestEndCb()
-                                },
+                                onDragEnd = { dragSide = 0; latestEndCb() },
                                 onDragCancel = { dragSide = 0; latestEndCb() }
                             )
                         }
