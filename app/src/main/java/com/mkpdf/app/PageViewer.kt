@@ -570,13 +570,13 @@ private fun PdfPageItem(
                 )
             }
         }
-        // Floating Copy bar: shown on the first selected page only, and hidden while dragging.
-        if (sel != null && isFirstSelPage && dragSide == 0 && !isDraggingSelection()) {
+        // Floating Copy bar: shown on the LAST selected page (where the finger ends), hidden while dragging.
+        if (sel != null && isLastSelPage && dragSide == 0 && !isDraggingSelection()) {
             val sx = widthPx / page.width
             val sy = heightPx / page.height
-            val first = sel.rects.first()
-            val left = (first.left * sx).roundToInt()
-            val top = (first.top * sy).roundToInt() - with(density) { 48.dp.roundToPx() }
+            val lastRect = sel.rects.last()
+            val left = (lastRect.left * sx).roundToInt()
+            val top = (lastRect.top * sy).roundToInt() - with(density) { 48.dp.roundToPx() }
             Surface(
                 color = Color(0xE6303134),
                 shape = RoundedCornerShape(20.dp),
