@@ -239,7 +239,11 @@ fun EditorApp(vm: EditorViewModel, themeMode: ThemeMode, onTheme: (ThemeMode) ->
                 TextButton(onClick = { closeAsk = false; exitAfter = false }) { Text("Cancel") }
             }
         }, confirmButton = {})
-    ui.error?.let { AlertDialog(onDismissRequest = vm::dismissError, title = { Text("MKpdf") }, text = { Text(it) }, confirmButton = { TextButton(onClick = vm::dismissError) { Text("OK") } }) }
+    // Password sentinels are handled by the password dialog below; never show them as raw text.
+    ui.error?.takeIf { it != "PASSWORD_REQUIRED" && it != "WRONG_PASSWORD" }?.let {
+        AlertDialog(onDismissRequest = vm::dismissError, title = { Text("MKpdf") }, text = { Text(it) },
+            confirmButton = { TextButton(onClick = vm::dismissError) { Text("OK") } })
+    }
     ui.passwordUri?.let { uri ->
         val isWrong = ui.error == "WRONG_PASSWORD"
         AlertDialog(

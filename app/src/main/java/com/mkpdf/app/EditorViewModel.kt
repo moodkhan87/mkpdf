@@ -26,6 +26,8 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
     private var sourceUri:Uri?=null
     /** True for a document that exists only in memory (for example a combined file): it must count as unsaved. */
     private var forceDirty=false
+    /** Pages whose links were already fetched for the current document generation. */
+    private val loadedLinkPages = mutableSetOf<Int>()
 
     init { perform {repo.run {init()};_ui.update {it.copy(recoveryAvailable=repo.saf.recovery.isFile)}} }
     fun dismissError() {_ui.update {it.copy(error=null)}}
@@ -55,19 +57,10 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) { /* A document without readable form fields still opens normally. */ }
-        // Load links for the current document (all pages).
-        try {
-            val allLinks = mutableListOf<PdfLink>()
-            for (page in d.pages.indices) {
-                val pageLinks = repo.run { call("links", d, "page" to page).pdfLinks() }
-                allLinks += pageLinks
-            }
-            _ui.update { s ->
-                val cur = s.doc
-                if (cur != null && cur.handle == d.handle && cur.generation == d.generation) s.copy(links = allLinks) else s
-            }
-        } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { /* Documents without links still open normally. */ }
+        // Links are loaded lazily per visible page (see ensureLinks), never for the whole document.
+        // A new generation invalidates whatever was cached for the previous one.
+        _ui.update { it.copy(links = emptyList()) }
+        loadedLinkPages.clear()
         search(_ui.value.query)
     }
 
@@ -250,6 +243,7 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             sourceUri=null
             _ui.update {it.copy(doc=null,query="",hits=emptyList(),selectedHit=-1,searching=false,
                 lines=emptyList(),fields=emptyList(),recoveryAvailable=false,passwordUri=null,links=emptyList(),selection=emptyList())}
+		loadedLinkPages.clear()
         }
     }
 
@@ -463,6 +457,27 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             sourceUri=null
         }
     }
+    /** Fetch a page's links once, when the page actually becomes visible. Read-only: no busy gate. */
+    fun ensureLinks(page: Int) {
+        val d = _ui.value.doc ?: return
+        if (page < 0 || page >= d.pages.size) return
+        if (!loadedLinkPages.add(page)) return   // already requested for this generation
+        viewModelScope.launch {
+            try {
+                val links = repo.run { call("links", d, "page" to page).pdfLinks() }
+                if (!sameDoc(d)) return@launch
+                _ui.update { s -> s.copy(links = s.links.filter { it.page != page } + links) }
+            } catch (e: CancellationException) {
+                loadedLinkPages.remove(page)
+                throw e
+            } catch (_: Exception) {
+                loadedLinkPages.remove(page)   // allow a retry when the page is seen again
+            }
+        }
+    }
+
+    /** Called by the viewer for the pages currently on screen. */
+    fun ensureLinksFor(pages: List<Int>) { pages.forEach(::ensureLinks) }
 
     fun loadLines(page:Int) {
         val d=_ui.value.doc?:return
@@ -515,13 +530,25 @@ class EditorViewModel(app:Application):AndroidViewModel(app) {
             delay(180)
             _ui.update {it.copy(searching=true)}
             try {
-                val searchQuery = normalizeArabic(query)
+            // Search BOTH the original query and its normalized form, then merge without duplicates.
+            // This keeps every match that used to work and adds the ones normalization unlocks.
+            val queries = listOf(query, normalizeArabic(query)).distinct()
                 for(page in d.pages.indices) {
                     coroutineContext.ensureActive()
-                    val results=repo.run {call("search_page",d,"page" to page,"query" to searchQuery).getJSONArray("hits").objects().map {h ->
-                        val rs=h.getJSONArray("rects")
-                        Hit(h.getInt("page"),h.getInt("start"),(0 until rs.length()).map {rs.getJSONArray(it).rect()})
-                    }}
+                    val seen = HashSet<Int>()
+                    val results = mutableListOf<Hit>()
+                    for (q in queries) {
+                        coroutineContext.ensureActive()
+                        repo.run { call("search_page", d, "page" to page, "query" to q) }
+                            .getJSONArray("hits").objects().forEach { h ->
+                                val start = h.getInt("start")
+                                if (seen.add(start)) {
+                                    val rs = h.getJSONArray("rects")
+                                    results += Hit(h.getInt("page"), start, (0 until rs.length()).map { rs.getJSONArray(it).rect() })
+                                }
+                            }
+                    }
+                    results.sortBy { it.start }
                     coroutineContext.ensureActive()
                     if(_ui.value.doc?.generation!=d.generation || _ui.value.doc?.handle!=d.handle)return@launch
                     _ui.update {it.copy(hits=it.hits+results)}

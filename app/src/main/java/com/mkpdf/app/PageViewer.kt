@@ -110,6 +110,12 @@ fun PdfPages(doc: Document, ui: UiState, vm: EditorViewModel, listState: LazyLis
     // Safety net: any new touch anywhere cancels a stale selection drag.
     fun endSelectionDrag() { fingerDown = false; selDrag = null }
 
+    // Load links only for the pages actually on screen (cheap, once per page per generation).
+    LaunchedEffect(doc.handle, doc.generation) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .collect { pages -> vm.ensureLinksFor(pages.filter { it < doc.pages.size }) }
+    }
+
     // Re-render the page images only after the pinch has settled.
     LaunchedEffect(zoom) { delay(250); renderZoom = zoom }
     // Show the scroll handle on touch or scroll; hide it two seconds after the last activity.
